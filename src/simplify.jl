@@ -17,9 +17,10 @@ rule_shift_pushdown(::AbstractTerm) = nothing
 rule_shift_pushdown(t::Shifted{Sh, T, U}) where {Sh, T, U<:Term} =
     Term(t.term.fn, map(a -> Shifted(t.shift, a), t.term.args))
 
-# 3. Shift over a constant is a no-op.
+# 3. Shift over a position-independent leaf (constant or broadcast scalar) is
+#    a no-op.
 rule_shift_const(::AbstractTerm) = nothing
-rule_shift_const(t::Shifted{Sh, T, U}) where {Sh, T, U<:Union{Const, Zero, One}} =
+rule_shift_const(t::Shifted{Sh, T, U}) where {Sh, T, U<:Union{Const, Zero, One, Scalar}} =
     t.term
 
 # 4. Identity / annihilator — by dispatch on the Zero/One *types* (never an

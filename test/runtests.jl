@@ -2,6 +2,8 @@ using GridAlgebra
 using Test
 using AbstractTrees
 using StaticArrays: SVector
+using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
+                   as_linear, as_star
 
 @testset "GridAlgebra" begin
 
@@ -127,6 +129,57 @@ using StaticArrays: SVector
 
         # A nested mix folds and collapses.
         @test simplify((f + Z) * (Const(2.0) + Const(3.0))) == f * Const(5.0)
+    end
+
+    @testset "differentiate" begin
+        f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
+
+        @testset "forward difference δ₊{1}(f)" begin
+            sst = differentiate(δ₊{1}(f), f)            # f[i+1] - f[i]
+            @test sst isa Stencil
+            @test AccessStyle(sst) === RowAccess()
+            @test sst.shifts === (ô, ê₁)                # reverse-lex (offset 0, then +1)
+            @test eltype(sst.term) === SVector{2, Float64}
+            # narrows to a contiguous LinearStencil along axis 1, offsets 0:1
+            ln = as_linear(sst)
+            @test ln isa LinearStencil{1, 0, 2}
+            @test AccessStyle(ln) === RowAccess()
+            @test ln.term === sst.term                  # verbatim
+        end
+
+        @testset "the design-doc example" begin
+            # g = f[i-2] - 4 f[i-1] + 3 f[i]; ∂/∂f has constant coefficients.
+            expr = f[-2ê₁] - 4f[-ê₁] + 3f[]
+            sst = differentiate(expr, f)
+            @test sst.shifts === (-2ê₁, -ê₁, ô)
+            @test as_linear(sst) isa LinearStencil{1, -2, 3}
+        end
+
+        @testset "variable coefficient: ∂(f*g)/∂f = g" begin
+            sst = differentiate(f * g, f)
+            @test sst.shifts === (ô,)                   # local (diagonal)
+            # the lone coefficient is g (a Slot ⇒ a position-dependent coefficient)
+            @test sst.term == Term(SVector, (g,))
+        end
+
+        @testset "nonlinear: ∂(f*f)/∂f = f + f" begin
+            sst = differentiate(f * f, f)
+            @test sst.shifts === (ô,)
+            @test sst.term == Term(SVector, (f + f,))   # summed at the shared offset
+        end
+
+        @testset "Laplacian-shape narrows to a star" begin
+            # δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f)) ⇒ 2-D L=1 five-point star.
+            lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))
+            sst = differentiate(lap, f)
+            @test sst.shifts === (-ê₂, -ê₁, ô, ê₁, ê₂)  # reverse-lex star order
+            @test as_star(sst) isa StarStencil{1, 2, 5}
+        end
+
+        @testset "independent / constant ⇒ error" begin
+            @test_throws ArgumentError differentiate(g, f)        # g ≠ f
+            @test_throws ArgumentError differentiate(Const(2.0) * g, f)
+        end
     end
 
 end
