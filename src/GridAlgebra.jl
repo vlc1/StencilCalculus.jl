@@ -8,12 +8,16 @@ using StencilCore: AbstractTerm, StaticShift, SShift, StaticPair, SPair,
 include("terms.jl")       # Slot, Scalar, Const, Zero, One, Term, Shifted
 include("operators.jl")   # operator overloads, SVector interception, getindex sugar, DSL functors
 include("trees.jl")       # AbstractTrees interface
+include("simplify.jl")    # rule rewriter
 
 # Concrete term types.
 export AbstractTerm, Slot, Scalar, Const, Zero, One, Term, Shifted
 
 # Non-local DSL functors (+ Unicode aliases).
 export FwdDiff, BwdDiff, FwdSum, BwdSum, δ₊, δ₋, σ₊, σ₋
+
+# Rewriting.
+export simplify
 
 # Re-exported offset vocabulary (DSL sugar) from StencilCore.
 export StaticShift, SShift, StaticPair, SPair

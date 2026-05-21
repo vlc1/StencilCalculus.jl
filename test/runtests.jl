@@ -87,4 +87,46 @@ using StaticArrays: SVector
         @test AbstractTrees.nodevalue(sh) === ê₁
     end
 
+    @testset "simplify" begin
+        f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
+        Z = Zero{Float64}(); I1 = One{Float64}()
+
+        # No-op on a normal-form expression / a leaf.
+        @test simplify(f) === f
+        @test simplify(f + g) == f + g
+
+        # Shift composition (built manually, bypassing getindex's eager merge).
+        nested = Shifted(ê₁, Shifted(ê₁, f))
+        @test simplify(nested) === f[2ê₁]
+        @test simplify(Shifted(ê₁, Shifted(-ê₁, f))) === f      # cancels to identity
+
+        # Shift pushdown to leaves.
+        d = δ₊{1}(f + g)                                         # Shifted(ê₁, f+g) - (f+g)
+        s = simplify(d)
+        @test s == (f[ê₁] + g[ê₁]) - (f + g)
+
+        # Shift over a constant is a no-op.
+        @test simplify(Shifted(ê₁, Const(2.0))) === Const(2.0)
+
+        # Identity / annihilator on Zero/One.
+        @test simplify(f + Z) === f
+        @test simplify(Z + f) === f
+        @test simplify(f * I1) === f
+        @test simplify(f * Z) === Z
+        @test simplify(f - Z) === f
+        @test simplify(Z - f) == -f
+        @test simplify(f / I1) === f
+
+        # Double negation.
+        @test simplify(-(-f)) === f
+
+        # Constant folding — produces Const, NOT Zero (strict, no auto-fold).
+        @test simplify(Const(2.0) + Const(3.0)) === Const(5.0)
+        @test simplify(Const(2.0) * Const(0.0)) === Const(0.0)
+        @test !(simplify(Const(2.0) * Const(0.0)) isa Zero)
+
+        # A nested mix folds and collapses.
+        @test simplify((f + Z) * (Const(2.0) + Const(3.0))) == f * Const(5.0)
+    end
+
 end
