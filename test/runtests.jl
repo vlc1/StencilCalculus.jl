@@ -1,9 +1,10 @@
 using GridAlgebra
 using Test
 using AbstractTrees
-using StaticArrays: SVector
+using StaticArrays: SVector, SUnitRange
 using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
-                   as_linear, as_star
+                   ColumnAccess, as_linear, as_star
+using CartesianOperators: build
 
 @testset "GridAlgebra" begin
 
@@ -227,6 +228,51 @@ using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
         fn = eval(Meta.parse(src))
         fv = collect(1.0:5.0); gv = collect(2.0:6.0)
         @test fn((; f = fv, g = gv), 2) == gv[2] * (fv[3] - fv[2])
+    end
+
+    @testset "build_stencil bridge" begin
+        f = Slot{:f, Float64}(); ψ = Slot{:ψ, Float64}()
+
+        @testset "constant coefficient → LinearStencil, end-to-end" begin
+            # ∂(δ₊{1}(f))/∂f is a constant forward-difference stencil.
+            sst = differentiate(δ₊{1}(f), f)
+            n = 6
+            st = build_stencil(sst; size = (n,))
+            @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, <:Any, ColumnAccess}
+            @test st.term[1] == SVector(-1.0, 1.0)        # column-anchored coefficients
+            # assembles to the same matrix as the directly-built stencil
+            ref = build(LinearStencil{1}(SUnitRange(0, 1), fill(SVector(-1.0, 1.0), n)),
+                        (1:n,), (1:n,))
+            @test build(st, (1:n,), (1:n,)) == ref
+            # and that matrix IS the forward difference: (A f)[i] = f[i+1]-f[i]
+            A = build(st, (1:n,), (1:n,)); fv = rand(n)
+            @test (A * fv)[1:n-1] ≈ diff(fv)
+        end
+
+        @testset "Laplacian (constant) → StarStencil, end-to-end" begin
+            lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))   # +Laplacian: f[i±1]+f[j±1]-4f
+            sst = differentiate(lap, f)
+            n1, n2 = 5, 4
+            st = build_stencil(sst; size = (n1, n2))
+            @test st isa StarStencil{1, 2, 5, SVector{5, Float64}, <:Any, ColumnAccess}
+            @test st.term[2, 2] == SVector(1.0, 1.0, -4.0, 1.0, 1.0)
+            ref = build(StarStencil{1}(fill(SVector(1.0, 1.0, -4.0, 1.0, 1.0), n1, n2)),
+                        (1:n1, 1:n2), (1:n1, 1:n2))
+            @test build(st, (1:n1, 1:n2), (1:n1, 1:n2)) == ref
+        end
+
+        @testset "variable coefficient: column-anchored shift" begin
+            # ∂(ψ * δ₊{1}(f))/∂f: row-anchored (-ψ, ψ); column-anchored
+            # (-ψ[c], ψ[c-1]). Materialize over ψ; coefficient axes shrink.
+            sst = differentiate(ψ * δ₊{1}(f), f)
+            @test AccessStyle(sst) === RowAccess()
+            ψv = collect(1.0:8.0)
+            st = build_stencil(sst, (ψ = ψv,))
+            @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, <:Any, ColumnAccess}
+            # column c=3 (within the shrunk axes): SVector(-ψ[3], ψ[2])
+            @test st.term[3] == SVector(-ψv[3], ψv[2])
+            @test axes(st.term, 1) == 2:8           # shrunk by the −1 coefficient shift
+        end
     end
 
 end

@@ -38,7 +38,9 @@ _body_expr(::Scalar{S}, idx) where {S} = Expr(:., :args, QuoteNode(S))          
 _body_expr(c::Const, idx)              = c.value
 _body_expr(::Zero{T}, idx)   where {T} = Expr(:call, :zero, T)
 _body_expr(::One{T}, idx)    where {T} = Expr(:call, :one, T)
-_body_expr(t::Term, idx)               = Expr(:call, nameof(t.fn), (_body_expr(a, idx) for a in t.args)...)
+# `nameof(SVector)` is `:SArray` (SVector is an alias), so name it explicitly.
+_callsym(f) = f === SVector ? :SVector : nameof(f)
+_body_expr(t::Term, idx) = Expr(:call, _callsym(t.fn), (_body_expr(a, idx) for a in t.args)...)
 function _body_expr(t::Shifted, idx)
     t.term isa Slot || error("materialize/code_string expect normal-form input (shifts on slots)")
     _slotref(_slotsym(t.term),
@@ -64,28 +66,34 @@ compiled `LazyArray`. The grid rank `N` is the substituted arrays' `ndims`
 inward by the term's shift footprint (no implicit broadcasting). Shifts become
 index arithmetic in the generated kernel.
 """
-function materialize(term::AbstractTerm, pairs::NamedTuple)
+function materialize(term::AbstractTerm, pairs::NamedTuple = (;); size = nothing)
     t = simplify(term)
     acc = _accesses(t)
-    isempty(acc) && throw(ArgumentError(
-        "expression has no Slot to materialize against (only scalars/constants)"))
-    slot_syms = unique(first.(acc))
-    N = ndims(pairs[first(slot_syms)])
-    for s in slot_syms
-        ndims(pairs[s]) == N || throw(ArgumentError(
-            "slots disagree on ndims: $(s) has $(ndims(pairs[s])), expected $(N)"))
-    end
-
-    # Valid index box: per axis, intersect (shifted) array axes.
-    axs = ntuple(N) do d
-        lo, hi = typemin(Int), typemax(Int)
-        for (sym, shift) in acc
-            o = _axis_offset(shift, d)
-            r = axes(pairs[sym], d)
-            lo = max(lo, first(r) - o)
-            hi = min(hi, last(r) - o)
+    if isempty(acc)
+        # Constant coefficient (no Slot): the mesh dims must be supplied.
+        size === nothing && throw(ArgumentError(
+            "expression has no Slot; pass `size` (the mesh dims) to materialize " *
+            "a constant-coefficient term"))
+        N = length(size)
+        axs = ntuple(d -> 1:size[d], N)
+    else
+        slot_syms = unique(first.(acc))
+        N = ndims(pairs[first(slot_syms)])
+        for s in slot_syms
+            ndims(pairs[s]) == N || throw(ArgumentError(
+                "slots disagree on ndims: $(s) has $(ndims(pairs[s])), expected $(N)"))
         end
-        lo:hi
+        # Valid index box: per axis, intersect (shifted) array axes.
+        axs = ntuple(N) do d
+            lo, hi = typemin(Int), typemax(Int)
+            for (sym, shift) in acc
+                o = _axis_offset(shift, d)
+                r = axes(pairs[sym], d)
+                lo = max(lo, first(r) - o)
+                hi = min(hi, last(r) - o)
+            end
+            lo:hi
+        end
     end
 
     idx = _idxvars(N)

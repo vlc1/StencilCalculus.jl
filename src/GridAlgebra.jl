@@ -15,6 +15,7 @@ include("trees.jl")        # AbstractTrees interface
 include("simplify.jl")     # rule rewriter
 include("differentiate.jl")# symbolic differentiation → Stencil{RowAccess}
 include("materialize.jl")  # codegen → LazyArray; code_string
+include("bridge.jl")       # Stencil{RowAccess} → assemblable Linear/Star{ColumnAccess}
 
 # Concrete term types.
 export AbstractTerm, Slot, Scalar, Const, Zero, One, Term, Shifted
@@ -25,8 +26,8 @@ export FwdDiff, BwdDiff, FwdSum, BwdSum, δ₊, δ₋, σ₊, σ₋
 # Rewriting + differentiation.
 export simplify, differentiate, derivative
 
-# Materialization / codegen.
-export materialize, code_string, LazyArray
+# Materialization / codegen + the assembly bridge.
+export materialize, code_string, LazyArray, build_stencil
 
 # Re-exported offset vocabulary (DSL sugar) from StencilCore.
 export StaticShift, SShift, StaticPair, SPair
