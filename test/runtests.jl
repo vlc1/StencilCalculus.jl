@@ -182,4 +182,51 @@ using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
         end
     end
 
+    @testset "materialize" begin
+        f = Slot{:f, Float64}(); g = Slot{:g, Float64}(); τ = Scalar{:τ, Float64}()
+
+        @testset "local elementwise" begin
+            fv = collect(1.0:6.0); gv = collect(10.0:10.0:60.0)
+            la = materialize(f * g + 2, (f = fv, g = gv))
+            @test la isa LazyArray{Float64, 1}
+            @test axes(la) == (1:6,)
+            @test la[3] == fv[3] * gv[3] + 2
+            @test collect(la) == fv .* gv .+ 2
+        end
+
+        @testset "shift shrinks axes (forward difference)" begin
+            fv = rand(16)
+            la = materialize(δ₊{1}(f), (f = fv,))     # f[i+1] - f[i]
+            @test axes(la) == (1:15,)
+            @test la[1] == fv[2] - fv[1]
+            @test [la[i] for i in 1:15] == diff(fv)
+        end
+
+        @testset "scalar parameter (un-indexed)" begin
+            fv = collect(1.0:5.0)
+            la = materialize(τ * f, (f = fv, τ = 0.5))
+            @test la[4] == 0.5 * fv[4]
+            @test collect(la) == 0.5 .* fv
+        end
+
+        @testset "2-D + intersection of shifted axes" begin
+            fv = reshape(collect(1.0:20.0), 4, 5)
+            la = materialize(f[ê₁] - f[ê₂], (f = fv,))   # f[i+1,j] - f[i,j+1]
+            @test axes(la) == (1:3, 1:4)
+            @test la[2, 3] == fv[3, 3] - fv[2, 4]
+        end
+    end
+
+    @testset "code_string" begin
+        f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
+        src = code_string(g * δ₊{1}(f); name = :advect)
+        @test occursin("function advect(args, i)", src)
+        @test occursin("args.f[i + 1]", src)
+        @test occursin("args.g[i]", src)
+        # round-trips to a runnable kernel
+        fn = eval(Meta.parse(src))
+        fv = collect(1.0:5.0); gv = collect(2.0:6.0)
+        @test fn((; f = fv, g = gv), 2) == gv[2] * (fv[3] - fv[2])
+    end
+
 end

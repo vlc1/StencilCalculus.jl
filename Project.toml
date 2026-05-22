@@ -1,19 +1,20 @@
 name = "GridAlgebra"
 uuid = "1591436d-4c38-47df-a82b-200eb3804211"
-authors = ["Vincent Le Chenadec <vincentlechenadec@gmail.com>"]
 version = "0.1.0"
+authors = ["Vincent Le Chenadec <vincentlechenadec@gmail.com>"]
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
+RuntimeGeneratedFunctions = "7e49a35a-f44a-4d26-94aa-eba1b4ca6b47"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 StencilCore = "a74cdc4b-3eb6-46ad-ac2b-692b37b57e71"
 
-# StencilCore is not (yet) registered; resolve it from the sibling checkout.
 [sources]
 StencilCore = {path = "../StencilCore"}
 
 [compat]
 AbstractTrees = "0.4"
+RuntimeGeneratedFunctions = "0.5.19"
 StaticArrays = "1"
 StencilCore = "0.1"
 julia = "1.11"
