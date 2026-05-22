@@ -24,7 +24,23 @@ Base.getindex(t::Slot, s::StaticShift)    = Shifted(t, s)
 Base.getindex(t::Shifted)                 = t
 Base.getindex(t::Shifted, s::StaticShift) = Shifted(t.term, t.shift + s)
 
-# Non-local difference / sum functors (axis-only, dimension-polymorphic).
+"""
+    FwdDiff{D} / BwdDiff{D} / FwdSum{D} / BwdSum{D}   (aliases δ₊, δ₋, σ₊, σ₋)
+
+Non-local first-order operators along mesh axis `D`, applied by **calling the
+type** on a term:
+
+| operator      | `op{D}(t)`                  | meaning            |
+|---------------|-----------------------------|--------------------|
+| `δ₊` `FwdDiff`| `t[i+1] - t[i]` along `D`   | forward difference |
+| `δ₋` `BwdDiff`| `t[i]   - t[i-1]`           | backward difference|
+| `σ₊` `FwdSum` | `t[i+1] + t[i]`             | forward sum        |
+| `σ₋` `BwdSum` | `t[i]   + t[i-1]`           | backward sum       |
+
+Each builds a `Term` over a `Shifted` leaf (e.g. `δ₊{1}(f) == f[ê₁] - f`); on a
+`Number` they collapse to the local closed form (`0`, `0`, `2x`, `2x`).
+Dimension-polymorphic — only the axis `D` is fixed.
+"""
 struct FwdDiff{D} <: Function end
 struct BwdDiff{D} <: Function end
 struct FwdSum{D}  <: Function end

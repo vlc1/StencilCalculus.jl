@@ -8,6 +8,19 @@
 
 # --- Derivative table (frule-shape: ∂f/∂(arg i)) ---------------------------
 
+"""
+    derivative(f, ::Val{i}, args...) -> AbstractTerm
+
+The symbolic partial derivative `∂f/∂(argᵢ)` of a primitive `f` applied to
+`args` (in the ChainRules `frule` style). Returns a term; the `0`/`1` cases use
+the type-level `Zero`/`One`. Extend it to teach `differentiate` a new primitive:
+
+```julia
+GridAlgebra.derivative(::typeof(myfun), ::Val{1}, x) = ...
+```
+"""
+function derivative end
+
 _pe(args) = mapreduce(eltype, promote_type, args)   # promoted element type
 
 derivative(::typeof(+), ::Val,    args...) = One{_pe(args)}()
