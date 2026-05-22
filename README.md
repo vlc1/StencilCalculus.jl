@@ -57,6 +57,32 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
   (`as_linear`/`as_star`, with optional `densify` padding) to an assemblable
   `LinearStencil`/`StarStencil`.
 
+## Design principle: type parameters are *structure*, values are *data*
+
+The leitmotiv behind the data structures. **Type parameters encode structure**
+— what drives dispatch, narrowing, and code generation; **runtime fields hold
+data** — values computed or substituted later.
+
+- **Shifts are structure.** They enter only through the DSL operators
+  (`δ₊{D}`, …) whose axis `D` is known at compile time, and they fix the offset
+  pattern, the codegen index arithmetic, and the `as_linear`/`as_star`
+  narrowing. So `StaticPair{D,O}` / `StaticShift` live entirely at the type
+  level, with a `+`/`-`/`*` algebra evaluated by the compiler.
+- **General coefficients are data.** Arbitrary (possibly non-`isbits`,
+  position-dependent) values would explode the type domain and wreck inference,
+  so they live in `Const`'s runtime field and in the substituted slot arrays.
+- **`0` and `1` are the exception — because they *are* structure.** The
+  additive/multiplicative identities are the neutral and annihilating elements
+  that make differentiation collapse and let `simplify` rewrite *by dispatch*
+  (`Zero + x → x`, `One * x → x`, `_ * Zero → Zero`) with no runtime
+  `iszero`/`isone` probing. That is why — and *only* why — they are promoted to
+  the type level as `Zero{T}` / `One{T}`. A user-written `Const(0)` is left
+  alone (the input is assumed reasonably simplified).
+
+This split is what lets the same expression be reasoned about symbolically
+(type-level shifts, dispatch-driven simplification) yet carry arbitrary runtime
+coefficients into the materialized kernel.
+
 ## Install
 
 Unregistered; clone [StencilCore](../StencilCore),
