@@ -1,6 +1,7 @@
 # StencilCalculus.jl
 
 [![Build Status](https://github.com/vlc1/StencilCalculus.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/vlc1/StencilCalculus.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://vlc1.github.io/StencilCalculus.jl/dev/)
 
 A small Computer Algebra System for expressions on N-D Cartesian meshes, whose
 purpose is to **build `AbstractStencil`s by differentiation**. Part of a

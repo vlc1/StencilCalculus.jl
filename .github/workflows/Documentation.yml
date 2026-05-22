@@ -1,0 +1,41 @@
+name: Documentation
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+permissions:
+  contents: write
+  pull-requests: read
+  statuses: write
+jobs:
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: StencilCalculus
+      # StencilCore and StencilAssembly are unregistered; check them out as
+      # siblings so the docs `[sources]` paths resolve.
+      - uses: actions/checkout@v6
+        with:
+          repository: vlc1/StencilCore.jl
+          path: StencilCore
+      - uses: actions/checkout@v6
+        with:
+          repository: vlc1/StencilAssembly.jl
+          path: StencilAssembly
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - name: Build and deploy docs
+        working-directory: StencilCalculus
+        run: |
+          julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+          julia --project=docs docs/make.jl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
