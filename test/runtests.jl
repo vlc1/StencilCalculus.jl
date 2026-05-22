@@ -273,6 +273,34 @@ using CartesianOperators: build
             @test st.term[3] == SVector(-ψv[3], ψv[2])
             @test axes(st.term, 1) == 2:8           # shrunk by the −1 coefficient shift
         end
+
+        @testset "offset-padding (densify) for a gappy result" begin
+            f = Slot{:f, Float64}()
+            sst = differentiate(f[-2ê₁] + 3f[], f)   # offsets {-2, 0} — gap at -1
+            @test sst.shifts === (-2ê₁, ô)
+
+            # densify fills the gap with a Zero coefficient.
+            d = densify(sst)
+            @test d.shifts === (-2ê₁, -ê₁, ô)
+            @test d.term.args[2] isa Zero            # inserted at offset -1
+
+            n = 7
+            # without padding, the gappy stencil cannot narrow
+            @test_throws ArgumentError build_stencil(sst; size = (n,))
+            # with padding it narrows and assembles
+            st = build_stencil(sst; size = (n,), pad = true)
+            @test st isa LinearStencil{1, -2, 3, SVector{3, Float64}, <:Any, ColumnAccess}
+            @test st.term[1] == SVector(1.0, 0.0, 3.0)
+            ref = build(LinearStencil{1}(SUnitRange(-2, 0), fill(SVector(1.0, 0.0, 3.0), n)),
+                        (1:n,), (1:n,))
+            @test build(st, (1:n,), (1:n,)) == ref
+
+            # densify is a no-op on an already-contiguous result and on a star
+            @test densify(differentiate(δ₊{1}(f), f)) === differentiate(δ₊{1}(f), f) ||
+                  densify(differentiate(δ₊{1}(f), f)).shifts === (ô, ê₁)
+            lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))
+            @test densify(differentiate(lap, f)).shifts === (-ê₂, -ê₁, ô, ê₁, ê₂)
+        end
     end
 
 end

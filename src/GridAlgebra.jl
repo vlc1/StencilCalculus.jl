@@ -27,7 +27,7 @@ export FwdDiff, BwdDiff, FwdSum, BwdSum, δ₊, δ₋, σ₊, σ₋
 export simplify, differentiate, derivative
 
 # Materialization / codegen + the assembly bridge.
-export materialize, code_string, LazyArray, build_stencil
+export materialize, code_string, LazyArray, build_stencil, densify
 
 # Re-exported offset vocabulary (DSL sugar) from StencilCore.
 export StaticShift, SShift, StaticPair, SPair
