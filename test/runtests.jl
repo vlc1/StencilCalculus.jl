@@ -190,12 +190,12 @@ using StencilAssembly: build
             @test sst isa Stencil
             @test AccessStyle(sst) === RowAccess()
             @test sst.shifts === (ô, ê₁)                # reverse-lex (offset 0, then +1)
-            @test eltype(sst.term) === SVector{2, Float64}
+            @test sst.terms == (Const(-1), One{Float64}())   # SoA: one coef per offset
             # narrows to a contiguous LinearStencil along axis 1, offsets 0:1
             ln = as_linear(sst)
             @test ln isa LinearStencil{1, 0, 2}
             @test AccessStyle(ln) === RowAccess()
-            @test ln.term === sst.term                  # verbatim
+            @test ln.term == Term(SVector, sst.terms)   # SoA terms interlaced into AoS
         end
 
         @testset "the design-doc example" begin
@@ -210,13 +210,13 @@ using StencilAssembly: build
             sst = differentiate(f * g, f)
             @test sst.shifts === (ô,)                   # local (diagonal)
             # the lone coefficient is g (a Slot ⇒ a position-dependent coefficient)
-            @test sst.term == Term(SVector, (g,))
+            @test sst.terms == (g,)
         end
 
         @testset "nonlinear: ∂(f*f)/∂f = f + f" begin
             sst = differentiate(f * f, f)
             @test sst.shifts === (ô,)
-            @test sst.term == Term(SVector, (f + f,))   # summed at the shared offset
+            @test sst.terms == (f + f,)                 # summed at the shared offset
         end
 
         @testset "Laplacian-shape narrows to a star" begin
@@ -352,7 +352,7 @@ using StencilAssembly: build
             # densify fills the gap with a Zero coefficient.
             d = densify(sst)
             @test d.shifts === (-2ê₁, -ê₁, ô)
-            @test d.term.args[2] isa Zero            # inserted at offset -1
+            @test d.terms[2] isa Zero                # inserted at offset -1
 
             n = 7
             # without padding, the gappy stencil cannot narrow

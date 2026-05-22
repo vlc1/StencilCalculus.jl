@@ -112,9 +112,10 @@ end
     differentiate(t::AbstractTerm, ::Slot{S}) -> StencilCore.Stencil{RowAccess}
 
 Differentiate `t` with respect to the field named `S` (matched on the symbol
-only). Returns a row-anchored `Stencil`: reverse-lex-ordered offsets and a
-single `SVector`-valued coefficient term whose `k`-th entry is `∂t/∂(f[σ_k])`.
-Throws if `t` does not depend on `S` (identically-zero derivative).
+only). Returns a row-anchored `Stencil` in structure-of-arrays form: reverse-
+lex-ordered offsets `shifts` and a parallel tuple `terms` whose `k`-th entry is
+the coefficient `∂t/∂(f[σ_k])`. Throws if `t` does not depend on `S`
+(identically-zero derivative).
 """
 function differentiate(t::AbstractTerm, v::Slot{S}) where {S}
     shifts, coefs = _group(_diff(simplify(t), v))
@@ -127,7 +128,7 @@ function differentiate(t::AbstractTerm, v::Slot{S}) where {S}
     key(s) = ntuple(k -> _axis_offset(s, N - k + 1), N)   # axis N most significant
     perm = sortperm(shifts; by = key)
     shifts, coefs = shifts[perm], coefs[perm]
-    Stencil(RowAccess, (shifts...,), Term(SVector, (coefs...,)))
+    Stencil(RowAccess, (shifts...,), (coefs...,))
 end
 
 """
