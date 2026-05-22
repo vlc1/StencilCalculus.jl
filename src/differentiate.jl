@@ -24,9 +24,9 @@ function derivative end
 _pe(args) = mapreduce(eltype, promote_type, args)   # promoted element type
 
 derivative(::typeof(+), ::Val,    args...) = One{_pe(args)}()
-derivative(::typeof(-), ::Val{1}, x)       = Const(-1)
+derivative(::typeof(-), ::Val{1}, x)       = -One{eltype(x)}()
 derivative(::typeof(-), ::Val{1}, x, y)    = One{_pe((x, y))}()
-derivative(::typeof(-), ::Val{2}, x, y)    = Const(-1)
+derivative(::typeof(-), ::Val{2}, x, y)    = -One{_pe((x, y))}()
 derivative(::typeof(*), ::Val{1}, x, y)    = y
 derivative(::typeof(*), ::Val{2}, x, y)    = x
 derivative(::typeof(/), ::Val{1}, x, y)    = Term(/, (One{_pe((x, y))}(), y))

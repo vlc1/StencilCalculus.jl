@@ -190,7 +190,7 @@ using StencilAssembly: build
             @test sst isa Stencil
             @test AccessStyle(sst) === RowAccess()
             @test sst.shifts === (ô, ê₁)                # reverse-lex (offset 0, then +1)
-            @test sst.terms == (Const(-1), One{Float64}())   # SoA: one coef per offset
+            @test sst.terms == (Term(-, (One{Float64}(),)), One{Float64}())   # SoA: one coef per offset
             # narrows to a contiguous LinearStencil along axis 1, offsets 0:1
             ln = as_linear(sst)
             @test ln isa LinearStencil{1, 0, 2}
