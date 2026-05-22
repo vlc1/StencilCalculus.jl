@@ -21,6 +21,25 @@ using StencilAssembly: build
         @test eltype(One{Int}()) === Int
     end
 
+    @testset "constructor macros" begin
+        @slot a                                         # default T = Number
+        @slot b Float64
+        @scalar τ
+        @scalar dt Float64
+        @const α 1
+        @const β 2.5
+        @test a === Slot{:a, Number}()
+        @test b === Slot{:b, Float64}()
+        @test τ === Scalar{:τ, Number}()
+        @test dt === Scalar{:dt, Float64}()
+        @test α === Const(1)
+        @test β === Const(2.5)
+        # the bound name drives the symbol parameter and composes in expressions
+        @slot ψ
+        @test ψ === Slot{:ψ, Number}()
+        @test (τ * ψ) isa Term{typeof(*)}
+    end
+
     @testset "operator overloading builds Terms" begin
         f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
         @test (f + g) isa Term{typeof(+)}
@@ -61,6 +80,30 @@ using StencilAssembly: build
         # the DSL expression from the design docs builds
         g = f[-2ê₁] - 4f[-ê₁] + 3f[]
         @test g isa Term
+
+        # a Scalar is shift-invariant
+        τ = Scalar{:τ, Float64}()
+        @test τ[] === τ
+        @test τ[ê₁] === τ
+        @test τ[3ê₁ + ê₂] === τ
+    end
+
+    @testset "display (normal-form, component form)" begin
+        f = Slot{:f, Number}(); ϕ = Slot{:ϕ, Number}()
+        τ = Scalar{:τ, Number}(); x = Slot{:x, Number}()
+        @test repr(f) == "f[]"                       # component form
+        @test repr(ϕ[ê₁]) == "ϕ[ê₁]"                 # shifted slot
+        @test repr(f[-2ê₁]) == "f[-2ê₁]"
+        @test repr(τ) == "τ"                         # scalar by symbol
+        @test repr(Const(2.0)) == "2.0"
+        @test repr(Zero{Number}()) == "0"            # symbolic identities
+        @test repr(One{Number}()) == "1"
+        @test repr(τ * δ₊{1}(f)) == "(τ * (f[ê₁] - f[]))"   # infix
+        @test repr(Term(exp, (x,))) == "exp(x[])"           # call form
+        @test repr(SVector(f, x)) == "SVector(f[], x[])"
+        @test repr(-f) == "-f[]"                            # unary minus
+        # display shows the normal form: f - 0 collapses to f[]
+        @test repr(f - Zero{Number}()) == "f[]"
     end
 
     @testset "non-local functors" begin
@@ -180,6 +223,21 @@ using StencilAssembly: build
         @testset "independent / constant ⇒ error" begin
             @test_throws ArgumentError differentiate(g, f)        # g ≠ f
             @test_throws ArgumentError differentiate(Const(2.0) * g, f)
+        end
+
+        @testset "∂ / Diff functor + differentiation w.r.t. a Scalar" begin
+            τ = Scalar{:τ, Float64}()
+            # w.r.t. a Scalar → an AbstractTerm (no spatial offsets)
+            @test ∂(τ)(τ * f) === f
+            @test differentiate(τ * f, τ) === f
+            @test ∂(f)(τ * f) == differentiate(τ * f, f)          # w.r.t. a Slot → Stencil
+            @test ∂(f)(τ * f) isa Stencil
+            # a Slot and a Scalar of the same symbol do not collide
+            s = Slot{:τ, Float64}()
+            @test ∂(τ)(τ * s) === s                               # ∂/∂(scalar τ)
+            @test ∂(s)(τ * s) isa Stencil                         # ∂/∂(slot τ)
+            # independence throws for the Scalar path too
+            @test_throws ArgumentError differentiate(f, τ)
         end
     end
 

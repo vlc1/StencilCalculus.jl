@@ -9,6 +9,7 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Guide" => "guide.md",
+        "Differentiation" => "differentiation.md",
         "API reference" => "api.md",
     ],
     checkdocs = :none,

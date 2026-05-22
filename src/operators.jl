@@ -23,6 +23,10 @@ Base.getindex(t::Slot)                    = t
 Base.getindex(t::Slot, s::StaticShift)    = Shifted(t, s)
 Base.getindex(t::Shifted)                 = t
 Base.getindex(t::Shifted, s::StaticShift) = Shifted(t.term, t.shift + s)
+# A Scalar is position-independent, so shifting it is the identity (consistent
+# with simplify's rule_shift_const).
+Base.getindex(t::Scalar)                  = t
+Base.getindex(t::Scalar, ::StaticShift)   = t
 
 """
     FwdDiff{D} / BwdDiff{D} / FwdSum{D} / BwdSum{D}   (aliases δ₊, δ₋, σ₊, σ₋)
@@ -62,3 +66,19 @@ const σ₋ = BwdSum
 (::Type{<:BwdDiff})(x::Number) = zero(x)
 (::Type{<:FwdSum})(x::Number)  = 2x
 (::Type{<:BwdSum})(x::Number)  = 2x
+
+"""
+    Diff(v::AbstractTerm)   (alias ∂)
+
+"With respect to" functor: `∂(v)(e) == differentiate(e, v)`. With a `Slot`
+variable the result is a `Stencil` (it has spatial offsets); with a `Scalar`
+it is an `AbstractTerm` (a scalar has no offsets). For example,
+`∂(τ)(τ * f) == f`.
+"""
+struct Diff{T<:AbstractTerm}
+    term::T
+end
+
+const ∂ = Diff
+
+(d::Diff)(e::AbstractTerm) = differentiate(e, d.term)

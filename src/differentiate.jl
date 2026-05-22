@@ -45,27 +45,36 @@ const _Contrib = Pair{StaticShift, AbstractTerm}
 
 _slotsym(::Slot{S}) where {S} = S
 
-_diff(::Union{Const, Scalar, Zero, One}, ::Val) = _Contrib[]
+# The differentiation variable is passed as an instance (a Slot or Scalar) so
+# that a Slot and a Scalar sharing a symbol do not collide: each matches only
+# its own kind of the same symbol and is inert with respect to the other.
+_diff(::Union{Const, Zero, One}, ::AbstractTerm) = _Contrib[]
 
-_diff(s::Slot{S2, T}, ::Val{S}) where {S2, T, S} =
+_diff(::Slot{S2, T}, ::Slot{S}) where {S2, T, S} =
     S2 === S ? _Contrib[ô => One{T}()] : _Contrib[]
+_diff(::Slot, ::Scalar) = _Contrib[]
 
-function _diff(sh::Shifted, ::Val{S}) where {S}
+_diff(::Scalar{S2, T}, ::Scalar{S}) where {S2, T, S} =
+    S2 === S ? _Contrib[ô => One{T}()] : _Contrib[]
+_diff(::Scalar, ::Slot) = _Contrib[]
+
+function _diff(sh::Shifted, ::Slot{S}) where {S}
     sl = sh.term
     sl isa Slot || throw(ArgumentError(
         "differentiate expects normal-form input (shifts on slots); got a " *
         "Shifted over $(typeof(sl)). Call simplify first."))
     _slotsym(sl) === S ? _Contrib[sh.shift => One{eltype(sh)}()] : _Contrib[]
 end
+_diff(::Shifted, ::Scalar) = _Contrib[]   # a shifted slot is inert w.r.t. a scalar
 
-function _diff(t::Term, ::Val{S}) where {S}
+function _diff(t::Term, v::AbstractTerm)
     out = _Contrib[]
     for (i, arg) in enumerate(t.args)
-        sub = _diff(arg, Val(S))
+        sub = _diff(arg, v)
         isempty(sub) && continue
-        ∂ = derivative(t.fn, Val(i), t.args...)
+        dfn = derivative(t.fn, Val(i), t.args...)
         for (sh, partial) in sub
-            push!(out, sh => simplify(Term(*, (∂, partial))))
+            push!(out, sh => simplify(Term(*, (dfn, partial))))
         end
     end
     return out
@@ -107,8 +116,8 @@ only). Returns a row-anchored `Stencil`: reverse-lex-ordered offsets and a
 single `SVector`-valued coefficient term whose `k`-th entry is `∂t/∂(f[σ_k])`.
 Throws if `t` does not depend on `S` (identically-zero derivative).
 """
-function differentiate(t::AbstractTerm, ::Slot{S}) where {S}
-    shifts, coefs = _group(_diff(simplify(t), Val(S)))
+function differentiate(t::AbstractTerm, v::Slot{S}) where {S}
+    shifts, coefs = _group(_diff(simplify(t), v))
     keep = findall(c -> !(c isa Zero), coefs)
     shifts, coefs = shifts[keep], coefs[keep]
     isempty(shifts) && throw(ArgumentError(
@@ -119,4 +128,22 @@ function differentiate(t::AbstractTerm, ::Slot{S}) where {S}
     perm = sortperm(shifts; by = key)
     shifts, coefs = shifts[perm], coefs[perm]
     Stencil(RowAccess, (shifts...,), Term(SVector, (coefs...,)))
+end
+
+"""
+    differentiate(t::AbstractTerm, ::Scalar{S}) -> AbstractTerm
+
+Differentiate `t` with respect to the broadcast parameter named `S`. A scalar
+carries no spatial offset, so the per-offset structure collapses: the result is
+a single coefficient **term** (not a `Stencil`). Throws if `t` does not depend
+on `S`.
+"""
+function differentiate(t::AbstractTerm, v::Scalar{S}) where {S}
+    _, coefs = _group(_diff(simplify(t), v))   # all contributions sit at ô
+    keep = findall(c -> !(c isa Zero), coefs)
+    isempty(keep) && throw(ArgumentError(
+        "the expression does not depend on Scalar :$(S); its derivative is " *
+        "identically zero"))
+    coefs = coefs[keep]
+    length(coefs) == 1 ? coefs[1] : foldl((a, b) -> simplify(Term(+, (a, b))), coefs)
 end

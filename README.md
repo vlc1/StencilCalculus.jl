@@ -20,8 +20,8 @@ stencil (`build_stencil`).
 using StencilCalculus, StencilAssembly
 using StaticArrays: SVector
 
-f = Slot{:f, Float64}()
-ψ = Slot{:ψ, Float64}()
+@slot f Float64
+@slot ψ Float64
 
 # A symbolic grid expression (upwind advection):  out[i] = ψ[i] · (f[i+1] − f[i])
 expr = ψ * δ₊{1}(f)
@@ -46,7 +46,9 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 
 - **Term types** `Slot{S,T}` (per-cell field), `Scalar{S,T}` (broadcast
   parameter), `Const`, the type-level identities `Zero`/`One`, `Term`, and
-  `Shifted`; element type `T` is computed at construction.
+  `Shifted`; element type `T` is computed at construction. The `@slot`,
+  `@scalar`, and `@const` macros bind a variable to a leaf named after it
+  (`@slot f Float64` ≡ `f = Slot{:f, Float64}()`; the type defaults to `Number`).
 - **DSL**: component-wise operator overloads, `SVector` interception, indexing
   sugar `f[-2ê₁]` (shift by a `StaticShift`), and the difference / sum functors
   `δ₊`/`δ₋`/`σ₊`/`σ₋` (`FwdDiff`/`BwdDiff`/`FwdSum`/`BwdSum`).

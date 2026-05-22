@@ -13,12 +13,16 @@ along a chosen axis. Indexing a slot shifts it by a lattice offset:
 ```julia
 using StencilCalculus
 
-f = Slot{:f, Float64}()
+@slot f Float64
 g = f[-2ê₁] - 4f[-ê₁] + 3f[]      # f[i-2] - 4 f[i-1] + 3 f[i]
-adv = Slot{:ψ, Float64}() * δ₊{1}(f)   # ψ[i] * (f[i+1] - f[i])
+@slot ψ Float64
+adv = ψ * δ₊{1}(f)                # ψ[i] * (f[i+1] - f[i])
 ```
 
-The element type is computed at construction, so an ill-typed expression is
+The `@slot`/`@scalar`/`@const` macros bind a variable to a leaf named after it
+(`@slot f Float64` ≡ `f = Slot{:f, Float64}()`); the type argument defaults to
+`Number`. The element type is computed at construction, so an ill-typed
+expression is
 rejected early. `Scalar`s materialize to a single broadcast value (e.g. a
 timestep), unlike `Slot`s which materialize to per-cell arrays.
 
@@ -28,7 +32,8 @@ timestep), unlike `Slot`s which materialize to per-cell arrays.
 nested shifts merged, identities collapsed:
 
 ```julia
-simplify(δ₊{1}(f + Slot{:g, Float64}()))   # (f[ê₁] + g[ê₁]) - (f + g)
+@slot g Float64
+simplify(δ₊{1}(f + g))   # (f[ê₁] + g[ê₁]) - (f + g)
 ```
 
 ## Differentiating into a stencil
@@ -40,7 +45,8 @@ whose per-offset coefficients are the partial derivatives:
 differentiate(δ₊{1}(f), f)               # offsets (ô, ê₁), coefficients (-1, 1)
 
 # variable coefficient — ∂(ψ·δ₊{1}(f))/∂f
-differentiate(Slot{:ψ,Float64}() * δ₊{1}(f), f)
+@slot ψ Float64
+differentiate(ψ * δ₊{1}(f), f)
 
 # nonlinear — ∂(f*f)/∂f = f + f
 differentiate(f * f, f)
@@ -64,7 +70,7 @@ gaps, and the mesh `size` for a constant coefficient. Then assemble with
 ```julia
 using StencilCalculus, StencilAssembly
 
-f = Slot{:f, Float64}()
+@slot f Float64
 sst = differentiate(lap, f)
 st  = build_stencil(sst; size = (5, 4))     # → StarStencil{1, 2, 5, …}
 A   = build(st, (1:5, 1:4), (1:5, 1:4))     # SparseMatrixCSC
@@ -75,7 +81,8 @@ For a variable-coefficient operator, pass the substituted arrays instead of
 
 ```julia
 ψv  = collect(1.0:8.0)
-sst = differentiate(Slot{:ψ,Float64}() * δ₊{1}(f), f)
+@slot ψ Float64
+sst = differentiate(ψ * δ₊{1}(f), f)
 st  = build_stencil(sst, (ψ = ψv,))         # coefficients read from ψv
 ```
 

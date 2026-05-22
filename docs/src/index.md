@@ -61,8 +61,8 @@ source.
 using StencilCalculus, StencilAssembly
 using StaticArrays
 
-f = Slot{:f, Float64}()
-ψ = Slot{:ψ, Float64}()
+@slot f Float64
+@slot ψ Float64
 
 # Upwind advection:  out[i] = ψ[i] * (f[i+1] - f[i])
 expr = ψ * δ₊{1}(f)
