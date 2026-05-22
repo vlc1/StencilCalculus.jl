@@ -46,9 +46,9 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 
 - **Term types** `Slot{S,T}` (per-cell field), `Scalar{S,T}` (broadcast
   parameter), `Const`, the type-level identities `Zero`/`One`, `Term`, and
-  `Shifted`; element type `T` is computed at construction. The `@slot`,
-  `@scalar`, and `@const` macros bind a variable to a leaf named after it
-  (`@slot f Float64` ≡ `f = Slot{:f, Float64}()`; the type defaults to `Number`).
+  `Shifted`; the (concrete) element type `T` is computed at construction. The
+  `@slot`, `@scalar`, and `@const` macros bind a variable to a leaf named after
+  it (`@slot f` ≡ `f = Slot{:f, Float64}()`; the type defaults to `Float64`).
 - **DSL**: component-wise operator overloads, `SVector` interception, indexing
   sugar `f[-2ê₁]` (shift by a `StaticShift`), and the difference / sum functors
   `δ₊`/`δ₋`/`σ₊`/`σ₋` (`FwdDiff`/`BwdDiff`/`FwdSum`/`BwdSum`).

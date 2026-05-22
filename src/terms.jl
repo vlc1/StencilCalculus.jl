@@ -1,35 +1,54 @@
 # Concrete `AbstractTerm{T}` subtypes — the leaves and nodes of a grid
 # expression tree. `AbstractTerm{T}` and `eltype(::Type{<:AbstractTerm{T}}) = T`
 # live in StencilCore; `T` is the materialized element type.
+#
+# `T` is required to be a **concrete** type: it is what the term materializes /
+# assembles into, and an abstract `T` (e.g. `Number`) can never be allocated.
+# The type system cannot express "concrete" as a bound, so it is checked at
+# construction; the default everywhere is `Float64`.
+
+@inline function _assert_concrete(name::Symbol, ::Type{T}) where {T}
+    isconcretetype(T) || throw(ArgumentError(
+        "$(name) needs a concrete element type; got $(T). Use e.g. Float64 " *
+        "(the default), Float32, or a concrete SVector."))
+    return nothing
+end
 
 """
     Slot{S, T}()
 
 Placeholder for a discrete field named `S` (a `Symbol`) whose cells hold
-values of type `T` (default `Number`). Substituted with an `AbstractArray`
-at `materialize` and indexed per cell.
+values of the concrete type `T` (default `Float64`). Substituted with an
+`AbstractArray` at `materialize` and indexed per cell.
 """
-struct Slot{S, T} <: AbstractTerm{T} end
-Slot{S}() where {S} = Slot{S, Number}()
+struct Slot{S, T} <: AbstractTerm{T}
+    Slot{S, T}() where {S, T} = (_assert_concrete(:Slot, T); new{S, T}())
+end
+Slot{S}() where {S} = Slot{S, Float64}()
 
 """
     Scalar{S, T}()
 
 Named, runtime-substituted **broadcast** parameter `S` (e.g. a timestep) of
-type `T` (default `Number`). Unlike [`Slot`](@ref) it materializes to a single
-un-indexed value; like a constant it has zero derivative.
+concrete type `T` (default `Float64`). Unlike [`Slot`](@ref) it materializes to
+a single un-indexed value; like a constant it has zero derivative.
 """
-struct Scalar{S, T} <: AbstractTerm{T} end
-Scalar{S}() where {S} = Scalar{S, Number}()
+struct Scalar{S, T} <: AbstractTerm{T}
+    Scalar{S, T}() where {S, T} = (_assert_concrete(:Scalar, T); new{S, T}())
+end
+Scalar{S}() where {S} = Scalar{S, Float64}()
 
 """
     Const(value)
 
-A literal constant carrying its `value` in a runtime field (general data).
+A literal constant carrying its `value` in a runtime field (general data). Its
+element type is `typeof(value)`, hence always concrete.
 """
 struct Const{T} <: AbstractTerm{T}
     value::T
+    Const{T}(value) where {T} = (_assert_concrete(:Const, T); new{T}(value))
 end
+Const(value) = Const{typeof(value)}(value)
 
 """
     Zero{T}() / One{T}()
@@ -38,8 +57,12 @@ Type-level additive / multiplicative identities (structure, not data): they
 let differentiation collapse and `simplify` rewrite by dispatch. Lower to
 `zero(T)` / `one(T)`.
 """
-struct Zero{T} <: AbstractTerm{T} end
-struct One{T}  <: AbstractTerm{T} end
+struct Zero{T} <: AbstractTerm{T}
+    Zero{T}() where {T} = (_assert_concrete(:Zero, T); new{T}())
+end
+struct One{T} <: AbstractTerm{T}
+    One{T}() where {T} = (_assert_concrete(:One, T); new{T}())
+end
 
 # Promote a numeric literal to a term.
 Base.convert(::Type{<:AbstractTerm}, x::Number) = Const(x)
@@ -93,24 +116,24 @@ Shifted(term::AbstractTerm, shift::StaticShift) = Shifted(shift, term)
 # --- Constructor macros: bind a variable to a leaf named after it -----------
 
 """
-    @slot name [T = Number]
+    @slot name [T = Float64]
 
 Bind `name` to `Slot{:name, T}()`, taking the variable name as the field
-symbol. `@slot f` ≡ `f = Slot{:f, Number}()`; `@slot f Float64` ≡
-`f = Slot{:f, Float64}()`.
+symbol. `@slot f` ≡ `f = Slot{:f, Float64}()`; `@slot f Float32` ≡
+`f = Slot{:f, Float32}()`.
 """
-macro slot(name, T = :Number)
+macro slot(name, T = :Float64)
     name isa Symbol || throw(ArgumentError("@slot expects a variable name, got `$(name)`"))
     :($(esc(name)) = $Slot{$(QuoteNode(name)), $(esc(T))}())
 end
 
 """
-    @scalar name [T = Number]
+    @scalar name [T = Float64]
 
-Bind `name` to `Scalar{:name, T}()`. `@scalar τ` ≡ `τ = Scalar{:τ, Number}()`;
-`@scalar τ Float64` ≡ `τ = Scalar{:τ, Float64}()`.
+Bind `name` to `Scalar{:name, T}()`. `@scalar τ` ≡ `τ = Scalar{:τ, Float64}()`;
+`@scalar τ Float32` ≡ `τ = Scalar{:τ, Float32}()`.
 """
-macro scalar(name, T = :Number)
+macro scalar(name, T = :Float64)
     name isa Symbol || throw(ArgumentError("@scalar expects a variable name, got `$(name)`"))
     :($(esc(name)) = $Scalar{$(QuoteNode(name)), $(esc(T))}())
 end

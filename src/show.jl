@@ -1,8 +1,8 @@
 # Pretty-printing of grid expressions in component form. `show` always renders
 # the *normal form* (`simplify`'d) of a term; it never mutates the term itself.
 # Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `Scalar` → its
-# symbol, `Const` → its value, `Zero`/`One` → `0`/`1` (the symbolic identities —
-# *not* `Const(zero(T))`, which would fail for an abstract `T` like `Number`).
+# symbol, `Const` → its value, `Zero`/`One` → the glyphs `0`/`1` (type-agnostic:
+# `Zero{Float64}` shows `0`, not `0.0`).
 
 const _INFIX = (:+, :-, :*, :/, :\, :^)
 
@@ -40,4 +40,11 @@ function _show(io::IO, t::Term)
         end
         print(io, ')')
     end
+end
+
+# The "with respect to" functor displays as a call of its alias: `∂(f[])`.
+function Base.show(io::IO, d::Diff)
+    print(io, "∂(")
+    show(io, d.term)
+    print(io, ')')
 end

@@ -20,9 +20,9 @@ adv = ψ * δ₊{1}(f)                # ψ[i] * (f[i+1] - f[i])
 ```
 
 The `@slot`/`@scalar`/`@const` macros bind a variable to a leaf named after it
-(`@slot f Float64` ≡ `f = Slot{:f, Float64}()`); the type argument defaults to
-`Number`. The element type is computed at construction, so an ill-typed
-expression is
+(`@slot f` ≡ `f = Slot{:f, Float64}()`); the type argument defaults to
+`Float64` and must be **concrete** (it is the type the term materializes into).
+The element type is computed at construction, so an ill-typed expression is
 rejected early. `Scalar`s materialize to a single broadcast value (e.g. a
 timestep), unlike `Slot`s which materialize to per-cell arrays.
 

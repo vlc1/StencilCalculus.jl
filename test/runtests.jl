@@ -12,31 +12,35 @@ using StencilAssembly: build
         f = Slot{:f, Float64}()
         @test f isa AbstractTerm{Float64}
         @test eltype(f) === Float64
-        @test Slot{:g}() isa Slot{:g, Number}          # default T
-        @test Scalar{:τ}() isa Scalar{:τ, Number}
-        @test eltype(Scalar{:τ, Real}()) === Real
+        @test Slot{:g}() isa Slot{:g, Float64}         # default T = Float64
+        @test Scalar{:τ}() isa Scalar{:τ, Float64}
+        @test eltype(Scalar{:τ, Float32}()) === Float32
         @test eltype(Const(2.0)) === Float64
         @test Const(3).value === 3
         @test eltype(Zero{Float64}()) === Float64
         @test eltype(One{Int}()) === Int
+        # T must be concrete: an abstract eltype can never be materialized.
+        @test_throws ArgumentError Slot{:f, Number}()
+        @test_throws ArgumentError Scalar{:s, Real}()
+        @test_throws ArgumentError Zero{Integer}()
     end
 
     @testset "constructor macros" begin
-        @slot a                                         # default T = Number
-        @slot b Float64
+        @slot a                                         # default T = Float64
+        @slot b Float32
         @scalar τ
-        @scalar dt Float64
+        @scalar dt Float32
         @const α 1
         @const β 2.5
-        @test a === Slot{:a, Number}()
-        @test b === Slot{:b, Float64}()
-        @test τ === Scalar{:τ, Number}()
-        @test dt === Scalar{:dt, Float64}()
+        @test a === Slot{:a, Float64}()
+        @test b === Slot{:b, Float32}()
+        @test τ === Scalar{:τ, Float64}()
+        @test dt === Scalar{:dt, Float32}()
         @test α === Const(1)
         @test β === Const(2.5)
         # the bound name drives the symbol parameter and composes in expressions
         @slot ψ
-        @test ψ === Slot{:ψ, Number}()
+        @test ψ === Slot{:ψ, Float64}()
         @test (τ * ψ) isa Term{typeof(*)}
     end
 
@@ -67,7 +71,7 @@ using StencilAssembly: build
     end
 
     @testset "getindex shift sugar" begin
-        f = Slot{:f, Number}()
+        f = Slot{:f, Float64}()
         @test f[] === f                                 # zero shift = identity
         @test f[ô] === f
         sh = f[-ê₁]
@@ -89,21 +93,24 @@ using StencilAssembly: build
     end
 
     @testset "display (normal-form, component form)" begin
-        f = Slot{:f, Number}(); ϕ = Slot{:ϕ, Number}()
-        τ = Scalar{:τ, Number}(); x = Slot{:x, Number}()
+        f = Slot{:f, Float64}(); ϕ = Slot{:ϕ, Float64}()
+        τ = Scalar{:τ, Float64}(); x = Slot{:x, Float64}()
         @test repr(f) == "f[]"                       # component form
         @test repr(ϕ[ê₁]) == "ϕ[ê₁]"                 # shifted slot
         @test repr(f[-2ê₁]) == "f[-2ê₁]"
         @test repr(τ) == "τ"                         # scalar by symbol
         @test repr(Const(2.0)) == "2.0"
-        @test repr(Zero{Number}()) == "0"            # symbolic identities
-        @test repr(One{Number}()) == "1"
+        @test repr(Zero{Float64}()) == "0"           # symbolic identities (type-agnostic)
+        @test repr(One{Float64}()) == "1"
         @test repr(τ * δ₊{1}(f)) == "(τ * (f[ê₁] - f[]))"   # infix
         @test repr(Term(exp, (x,))) == "exp(x[])"           # call form
         @test repr(SVector(f, x)) == "SVector(f[], x[])"
         @test repr(-f) == "-f[]"                            # unary minus
+        # the ∂ / Diff functor
+        @test repr(∂(f)) == "∂(f[])"
+        @test repr(∂(τ)) == "∂(τ)"
         # display shows the normal form: f - 0 collapses to f[]
-        @test repr(f - Zero{Number}()) == "f[]"
+        @test repr(f - Zero{Float64}()) == "f[]"
     end
 
     @testset "non-local functors" begin
@@ -238,6 +245,11 @@ using StencilAssembly: build
             @test ∂(s)(τ * s) isa Stencil                         # ∂/∂(slot τ)
             # independence throws for the Scalar path too
             @test_throws ArgumentError differentiate(f, τ)
+            # the default-typed pipeline works now that T is concrete (Float64)
+            @slot fd
+            @scalar td
+            @test ∂(td)(td * fd) === fd
+            @test ∂(fd)(td * fd) isa Stencil
         end
     end
 

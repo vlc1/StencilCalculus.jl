@@ -43,19 +43,19 @@ mutated). The conventions:
 @slot f
 @scalar τ
 repr(τ * δ₊{1}(f))   # "(τ * (f[ê₁] - f[]))"
-repr(f - Zero{Number}())   # "f[]"  — display is of the simplified form
+repr(f - Zero{Float64}())   # "f[]"  — display is of the simplified form
 ```
 
 The bracket notation makes the *structure* visible: `f[]` is the field read at
 the current cell, `f[ê₁]` the same field one cell along axis 1. A bare slot and
 its zero-shift are the same object, so both print `f[]`.
 
-!!! note "Why `0`/`1`, not `Const(zero(T))`"
-    The natural-looking idea of displaying `Zero{T}` as whatever `Const(zero(T))`
-    prints only works for *concrete* `T`. The default element type is the
-    abstract `Number`, and `zero(Number)` is undefined. `Zero`/`One` are
-    *symbolic* identities (structure, not data), so they print as the glyphs
-    `0`/`1` regardless of `T` — no value is ever constructed.
+!!! note "Why the glyphs `0`/`1`"
+    `Zero`/`One` are *symbolic* identities (structure, not data), so they print
+    as the bare glyphs `0`/`1` regardless of `T` — `Zero{Float64}` shows `0`,
+    not `0.0`. The display stays type-agnostic and no value is ever constructed,
+    which keeps it faithful to their role as the structural neutrals that drive
+    `simplify` and make the chain rule collapse.
 
 ## Differentiation: the concrete behaviour
 
