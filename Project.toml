@@ -1,4 +1,4 @@
-name = "GridAlgebra"
+name = "StencilCalculus"
 uuid = "1591436d-4c38-47df-a82b-200eb3804211"
 version = "0.1.0"
 authors = ["Vincent Le Chenadec <vincentlechenadec@gmail.com>"]
@@ -11,7 +11,7 @@ StencilCore = "a74cdc4b-3eb6-46ad-ac2b-692b37b57e71"
 
 [sources]
 StencilCore = {path = "../StencilCore"}
-CartesianOperators = {path = "../CartesianOperators"}
+StencilAssembly = {path = "../StencilAssembly"}
 
 [compat]
 AbstractTrees = "0.4"
@@ -21,8 +21,8 @@ StencilCore = "0.1"
 julia = "1.11"
 
 [extras]
-CartesianOperators = "9490c4af-147d-4721-8d2a-1e2bdce723b1"
+StencilAssembly = "9490c4af-147d-4721-8d2a-1e2bdce723b1"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "CartesianOperators"]
+test = ["Test", "StencilAssembly"]

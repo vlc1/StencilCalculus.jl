@@ -2,7 +2,7 @@
 # coefficient) into an assemblable concrete-coefficient
 # `LinearStencil`/`StarStencil{ColumnAccess}` — closing the
 # differentiate → assemble loop. The CSC `assemble`/`update!`/`build` then
-# live in CartesianOperators.
+# live in StencilAssembly.
 
 using StencilCore: as_linear, as_star, AccessStyle
 
@@ -83,7 +83,7 @@ Lower a (typically `differentiate`-produced) `Stencil` to an assemblable
 4. narrow the offset pattern (`as_linear` / `as_star`), reusing the
    materialized coefficient verbatim.
 
-The result is ready for `CartesianOperators.build` / `assemble`.
+The result is ready for `StencilAssembly.build` / `assemble`.
 """
 function build_stencil(sst::Stencil, pairs::NamedTuple = (;); size = nothing, pad::Bool = false)
     cst = _to_column(sst)

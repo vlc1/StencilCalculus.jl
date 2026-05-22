@@ -16,7 +16,7 @@ The symbolic partial derivative `∂f/∂(argᵢ)` of a primitive `f` applied to
 the type-level `Zero`/`One`. Extend it to teach `differentiate` a new primitive:
 
 ```julia
-GridAlgebra.derivative(::typeof(myfun), ::Val{1}, x) = ...
+StencilCalculus.derivative(::typeof(myfun), ::Val{1}, x) = ...
 ```
 """
 function derivative end

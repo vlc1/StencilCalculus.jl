@@ -106,6 +106,6 @@ function simplify(t::AbstractTerm, rules = DEFAULT_RULES; maxsteps::Int = 64)
         t′ === t && return t
         t = t′
     end
-    @warn "GridAlgebra.simplify hit the step budget; returning current form" maxsteps
+    @warn "StencilCalculus.simplify hit the step budget; returning current form" maxsteps
     return t
 end

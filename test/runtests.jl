@@ -1,12 +1,12 @@
-using GridAlgebra
+using StencilCalculus
 using Test
 using AbstractTrees
 using StaticArrays: SVector, SUnitRange
 using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
                    ColumnAccess, as_linear, as_star
-using CartesianOperators: build
+using StencilAssembly: build
 
-@testset "GridAlgebra" begin
+@testset "StencilCalculus" begin
 
     @testset "leaf construction + eltype" begin
         f = Slot{:f, Float64}()

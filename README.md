@@ -1,9 +1,9 @@
-# GridAlgebra.jl
+# StencilCalculus.jl
 
 A small Computer Algebra System for expressions on N-D Cartesian meshes, whose
 purpose is to **build `AbstractStencil`s by differentiation**. Part of a
 three-package stack: it depends on [StencilCore](../StencilCore) for the term /
-stencil types, and pairs with [CartesianOperators](../CartesianOperators) for
+stencil types, and pairs with [StencilAssembly](../StencilAssembly) for
 CSC assembly.
 
 Define discrete fields as **slots**, compose component-wise and non-local
@@ -14,7 +14,7 @@ stencil (`build_stencil`).
 ## Pipeline at a glance
 
 ```julia
-using GridAlgebra, CartesianOperators
+using StencilCalculus, StencilAssembly
 using StaticArrays: SVector
 
 f = Slot{:f, Float64}()
@@ -86,11 +86,10 @@ coefficients into the materialized kernel.
 ## Install
 
 Unregistered; clone [StencilCore](../StencilCore),
-[CartesianOperators](../CartesianOperators), and this repo **side by side** (the
+[StencilAssembly](../StencilAssembly), and this repo **side by side** (the
 relative `[sources]` paths resolve them), then `]dev` this package.
 
 ## Design
 
-The full design rationale lives in
-[`CartesianOperators/docs/cas.md`](../CartesianOperators/docs/cas.md) (with the
-package-split plan in `docs/core.md`).
+The full design rationale lives in [`docs/cas.md`](docs/cas.md) (with the
+package-split plan in [`StencilCore/docs/core.md`](../StencilCore/docs/core.md)).

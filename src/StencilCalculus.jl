@@ -1,4 +1,4 @@
-module GridAlgebra
+module StencilCalculus
 
 using AbstractTrees
 import StaticArrays: SVector       # imported (not just `using`) so we can add a method
@@ -33,4 +33,4 @@ export materialize, code_string, LazyArray, build_stencil, densify
 export StaticShift, SShift, StaticPair, SPair
 export ô, ê₁, ê₂, ê₃, ê₄, ê₅, ê₆, ê₇, ê₈, ê₉
 
-end # module GridAlgebra
+end # module StencilCalculus
