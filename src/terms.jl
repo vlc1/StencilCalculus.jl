@@ -1,25 +1,18 @@
-# Concrete `AbstractTerm{T}` subtypes — the leaves and nodes of a grid
-# expression tree. `AbstractTerm{T}` and `eltype(::Type{<:AbstractTerm{T}}) = T`
-# live in StencilCore; `T` is the materialized element type.
+# Concrete `AbstractTerm{T}` subtypes — the leaves and interior nodes of a
+# grid expression tree. `AbstractTerm{T}` and the `_assert_concrete` guard live
+# in StencilCore; `T` is the materialized element type (concrete; default
+# `Float64`).
 #
-# `T` is required to be a **concrete** type: it is what the term materializes /
-# assembles into, and an abstract `T` (e.g. `Number`) can never be allocated.
-# The type system cannot express "concrete" as a bound, so it is checked at
-# construction; the default everywhere is `Float64`.
-
-@inline function _assert_concrete(name::Symbol, ::Type{T}) where {T}
-    isconcretetype(T) || throw(ArgumentError(
-        "$(name) needs a concrete element type; got $(T). Use e.g. Float64 " *
-        "(the default), Float32, or a concrete SVector."))
-    return nothing
-end
+# Scalars (`AbstractScalar`) live in scalar-land and enter term expressions
+# only via [`Fill`](@ref), so `Term.args` stays `Tuple{Vararg{AbstractTerm}}`.
 
 """
     Slot{S, T}()
 
 Placeholder for a discrete field named `S` (a `Symbol`) whose cells hold
 values of the concrete type `T` (default `Float64`). Substituted with an
-`AbstractArray` at `materialize` and indexed per cell.
+`AbstractArray` at `materialize` and indexed per cell. Term-side analogue of
+[`Symbolic`](@ref).
 """
 struct Slot{S, T} <: AbstractTerm{T}
     Slot{S, T}() where {S, T} = (_assert_concrete(:Slot, T); new{S, T}())
@@ -27,35 +20,11 @@ end
 Slot{S}() where {S} = Slot{S, Float64}()
 
 """
-    Scalar{S, T}()
-
-Named, runtime-substituted **broadcast** parameter `S` (e.g. a timestep) of
-concrete type `T` (default `Float64`). Unlike [`Slot`](@ref) it materializes to
-a single un-indexed value; like a constant it has zero derivative.
-"""
-struct Scalar{S, T} <: AbstractTerm{T}
-    Scalar{S, T}() where {S, T} = (_assert_concrete(:Scalar, T); new{S, T}())
-end
-Scalar{S}() where {S} = Scalar{S, Float64}()
-
-"""
-    Const(value)
-
-A literal constant carrying its `value` in a runtime field (general data). Its
-element type is `typeof(value)`, hence always concrete.
-"""
-struct Const{T} <: AbstractTerm{T}
-    value::T
-    Const{T}(value) where {T} = (_assert_concrete(:Const, T); new{T}(value))
-end
-Const(value) = Const{typeof(value)}(value)
-
-"""
     Zero{T}() / One{T}()
 
 Type-level additive / multiplicative identities (structure, not data): they
 let differentiation collapse and `simplify` rewrite by dispatch. Lower to
-`zero(T)` / `one(T)`.
+`zero(T)` / `one(T)`. Scalar-side analogues: [`Null`](@ref) / [`Unity`](@ref).
 """
 struct Zero{T} <: AbstractTerm{T}
     Zero{T}() where {T} = (_assert_concrete(:Zero, T); new{T}())
@@ -63,11 +32,6 @@ end
 struct One{T} <: AbstractTerm{T}
     One{T}() where {T} = (_assert_concrete(:One, T); new{T}())
 end
-
-# Promote a numeric literal to a term.
-Base.convert(::Type{<:AbstractTerm}, x::Number) = Const(x)
-asterm(t::AbstractTerm) = t
-asterm(x::Number) = Const(x)
 
 """
     Term(fn, args::Tuple{Vararg{AbstractTerm}})
@@ -113,6 +77,37 @@ Shifted(shift::StaticShift, term::AbstractTerm{T}) where {T} =
     Shifted{typeof(shift), T, typeof(term)}(shift, term)
 Shifted(term::AbstractTerm, shift::StaticShift) = Shifted(shift, term)
 
+"""
+    Fill{T} <: AbstractTerm{T}
+
+Broadcast-to-grid bridge from scalar-land to term-land: wraps a single value
+(a literal or an [`AbstractScalar`](@ref)) and presents it as a spatially-
+invariant `AbstractTerm`. The element type follows the wrapped value: for a
+literal `T` it is `T`; for an `AbstractScalar` it is `eltype(scalar)`
+(recursive), so e.g. `Fill(Symbolic{:τ, Float64}())` has eltype `Float64`
+and arithmetic with a `Slot{:f, Float64}` promotes cleanly.
+"""
+struct Fill{T} <: AbstractTerm{T}
+    val::T
+    Fill{T}(val) where {T} = (_assert_concrete(:Fill, T); new{T}(val))
+end
+Fill(v::AbstractScalar) = Fill{typeof(v)}(v)
+Fill(v) = Fill{typeof(v)}(v)
+
+# Specialize `eltype` recursively for Fills wrapping an AbstractScalar so that
+# `Base.promote_op` against the scalar's underlying numeric type works.
+Base.eltype(::Type{Fill{T}}) where {T<:AbstractScalar} = eltype(T)
+
+# Promote a numeric literal / bare scalar to a term: literals canonicalise in
+# scalar-land first (`Fill(Const(x))`); bare scalars wrap (`Fill(s)`); terms
+# pass through.
+asterm(t::AbstractTerm)   = t
+asterm(s::AbstractScalar) = Fill(s)
+asterm(x::Number)         = Fill(Const(x))
+
+Base.convert(::Type{<:AbstractTerm}, x::Number)         = Fill(Const(x))
+Base.convert(::Type{<:AbstractTerm}, s::AbstractScalar) = Fill(s)
+
 # --- Constructor macros: bind a variable to a leaf named after it -----------
 
 """
@@ -120,32 +115,9 @@ Shifted(term::AbstractTerm, shift::StaticShift) = Shifted(shift, term)
 
 Bind `name` to `Slot{:name, T}()`, taking the variable name as the field
 symbol. `@slot f` ≡ `f = Slot{:f, Float64}()`; `@slot f Float32` ≡
-`f = Slot{:f, Float32}()`.
+`f = Slot{:f, Float32}()`. Scalar-side analogue: [`@symbolic`](@ref).
 """
 macro slot(name, T = :Float64)
     name isa Symbol || throw(ArgumentError("@slot expects a variable name, got `$(name)`"))
     :($(esc(name)) = $Slot{$(QuoteNode(name)), $(esc(T))}())
-end
-
-"""
-    @scalar name [T = Float64]
-
-Bind `name` to `Scalar{:name, T}()`. `@scalar τ` ≡ `τ = Scalar{:τ, Float64}()`;
-`@scalar τ Float32` ≡ `τ = Scalar{:τ, Float32}()`.
-"""
-macro scalar(name, T = :Float64)
-    name isa Symbol || throw(ArgumentError("@scalar expects a variable name, got `$(name)`"))
-    :($(esc(name)) = $Scalar{$(QuoteNode(name)), $(esc(T))}())
-end
-
-"""
-    @const name value
-
-Bind `name` to `Const(value)`. `@const α 1` ≡ `α = Const(1)`. Defined via the
-`var"@const"` function form because `const` is a reserved word (so a plain
-`macro const` would not parse).
-"""
-function var"@const"(__source__::LineNumberNode, __module__::Module, name, value)
-    name isa Symbol || throw(ArgumentError("@const expects a variable name, got `$(name)`"))
-    :($(esc(name)) = $Const($(esc(value))))
 end

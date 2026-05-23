@@ -1,18 +1,22 @@
 # Pretty-printing of grid expressions in component form. `show` always renders
 # the *normal form* (`simplify`'d) of a term; it never mutates the term itself.
-# Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `Scalar` → its
-# symbol, `Const` → its value, `Zero`/`One` → the glyphs `0`/`1` (type-agnostic:
-# `Zero{Float64}` shows `0`, not `0.0`).
+# Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `Zero`/`One` →
+# `0`/`1` glyphs (type-agnostic, parallel to the scalar-side `Null`/`Unity`),
+# `Fill` → its wrapped value via the scalar-side show (e.g. `Fill(Const(2.0))`
+# prints as `2.0`, `Fill(τ)` prints as `τ`).
 
 const _INFIX = (:+, :-, :*, :/, :\, :^)
 
 Base.show(io::IO, t::AbstractTerm) = _show(io, simplify(t))
 
-_show(io::IO, ::Slot{S})   where {S} = print(io, S, "[]")
-_show(io::IO, ::Scalar{S}) where {S} = print(io, S)
-_show(io::IO, c::Const)              = show(io, c.value)
-_show(io::IO, ::Zero)                = print(io, '0')
-_show(io::IO, ::One)                 = print(io, '1')
+_show(io::IO, ::Slot{S}) where {S} = print(io, S, "[]")
+_show(io::IO, ::Zero)              = print(io, '0')
+_show(io::IO, ::One)               = print(io, '1')
+# A Fill is rendered as its wrapped value: AbstractScalar uses Core's scalar
+# show; a literal uses Base.show directly. Either way, no `[]` (Fill has no
+# spatial index).
+_show(io::IO, f::Fill{T}) where {T<:AbstractScalar} = show(io, f.val)
+_show(io::IO, f::Fill)                              = show(io, f.val)
 
 function _show(io::IO, t::Shifted)
     t.term isa Slot || error("display expects normal-form input (shifts on slots)")
@@ -42,7 +46,8 @@ function _show(io::IO, t::Term)
     end
 end
 
-# The "with respect to" functor displays as a call of its alias: `∂(f[])`.
+# The "with respect to" functor displays as a call of its alias: `∂(f[])` /
+# `∂(τ)` depending on whether its target is a Slot or a Symbolic.
 function Base.show(io::IO, d::Diff)
     print(io, "∂(")
     show(io, d.term)

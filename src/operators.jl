@@ -1,21 +1,33 @@
 # Component-wise operator overloads, SVector interception, indexing-as-shift
 # sugar, and the non-local difference/sum DSL functors. All build `Term` /
-# `Shifted` nodes; numeric literals are wrapped via `asterm`.
+# `Shifted` nodes; numeric literals are wrapped via `Fill(Const(…))` and bare
+# AbstractScalars via `Fill(s)`. Operations that involve no AbstractTerm at
+# all (Number↔AbstractScalar, AbstractScalar↔AbstractScalar, unary
+# AbstractScalar) live in StencilCore and build `Scalar` nodes; the overloads
+# below cover only the combinations that yield an `AbstractTerm`.
 
-# Binary operators (term⊗term, term⊗number, number⊗term).
+# Dispatch-only union for the operator boundary. Not threaded through
+# `Term.args` (which stays `Tuple{Vararg{AbstractTerm}}`) or through simplify.
+const TermLike = Union{AbstractTerm, AbstractScalar}
+
+# Binary operators — every combination that includes at least one AbstractTerm.
 for op in (:+, :-, :*, :/, :\, :^, :min, :max)
-    @eval Base.$op(a::AbstractTerm, b::AbstractTerm) = Term($op, (a, b))
-    @eval Base.$op(a::AbstractTerm, b::Number)       = Term($op, (a, asterm(b)))
-    @eval Base.$op(a::Number,       b::AbstractTerm) = Term($op, (asterm(a), b))
+    @eval Base.$op(a::AbstractTerm,   b::AbstractTerm)   = Term($op, (a, b))
+    @eval Base.$op(a::AbstractTerm,   b::AbstractScalar) = Term($op, (a, Fill(b)))
+    @eval Base.$op(a::AbstractScalar, b::AbstractTerm)   = Term($op, (Fill(a), b))
+    @eval Base.$op(a::AbstractTerm,   b::Number)         = Term($op, (a, Fill(Const(b))))
+    @eval Base.$op(a::Number,         b::AbstractTerm)   = Term($op, (Fill(Const(a)), b))
 end
 
-# Unary operators.
+# Unary operators on AbstractTerm. The AbstractScalar unary overloads live in
+# StencilCore and produce `Scalar` nodes.
 for op in (:-, :+, :exp, :sin, :cos, :tan, :log, :sqrt, :abs)
     @eval Base.$op(a::AbstractTerm) = Term($op, (a,))
 end
 
-# SVector interception: a vector field built component-wise from terms.
-SVector(args::AbstractTerm...) = Term(SVector, args)
+# SVector interception: a vector field built component-wise. Scalars/numbers
+# get wrapped via `asterm` so the args are uniformly AbstractTerm.
+SVector(args::TermLike...) = Term(SVector, map(asterm, args))
 
 # Indexing-as-shift sugar. `AbstractTerm` is not `<: AbstractArray`, so
 # `getindex` is free to mean "shift by a StaticShift" with no clash.
@@ -23,10 +35,13 @@ Base.getindex(t::Slot)                    = t
 Base.getindex(t::Slot, s::StaticShift)    = Shifted(t, s)
 Base.getindex(t::Shifted)                 = t
 Base.getindex(t::Shifted, s::StaticShift) = Shifted(t.term, t.shift + s)
-# A Scalar is position-independent, so shifting it is the identity (consistent
-# with simplify's rule_shift_const).
-Base.getindex(t::Scalar)                  = t
-Base.getindex(t::Scalar, ::StaticShift)   = t
+# Position-independent term leaves: any shift is the identity.
+Base.getindex(t::Fill)                = t
+Base.getindex(t::Fill, ::StaticShift) = t
+Base.getindex(t::Zero)                = t
+Base.getindex(t::Zero, ::StaticShift) = t
+Base.getindex(t::One)                 = t
+Base.getindex(t::One, ::StaticShift)  = t
 
 """
     FwdDiff{D} / BwdDiff{D} / FwdSum{D} / BwdSum{D}   (aliases δ₊, δ₋, σ₊, σ₋)
@@ -68,15 +83,14 @@ const σ₋ = BwdSum
 (::Type{<:BwdSum})(x::Number)  = 2x
 
 """
-    Diff(v::AbstractTerm)   (alias ∂)
+    Diff(v)   (alias ∂)
 
-"With respect to" functor: `∂(v)(e) == differentiate(e, v)`. With a `Slot`
-variable the result is a `Stencil` (it has spatial offsets); with a `Scalar`
-it is an `AbstractTerm` (a scalar has no offsets). For example,
-`∂(τ)(τ * f) == f`.
+"With respect to" functor: `∂(v)(e) == differentiate(e, v)`. `v` may be a
+[`Slot`](@ref) (the result is a spatial `Stencil`) or a [`Symbolic`](@ref)
+(the result is an `AbstractTerm` coefficient — a per-cell broadcast).
 """
-struct Diff{T<:AbstractTerm}
-    term::T
+struct Diff{V<:TermLike}
+    term::V
 end
 
 const ∂ = Diff

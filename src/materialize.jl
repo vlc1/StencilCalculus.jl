@@ -32,12 +32,14 @@ end
 # Index variables: i, j, k for N ≤ 3, else i1, i2, …
 _idxvars(N::Integer) = N <= 3 ? [:i, :j, :k][1:N] : [Symbol(:i, d) for d in 1:N]
 
-_slotref(S, idxs)         = Expr(:ref, Expr(:., :args, QuoteNode(S)), idxs...)   # args.S[idxs...]
-_body_expr(::Slot{S}, idx)   where {S} = _slotref(S, idx)
-_body_expr(::Scalar{S}, idx) where {S} = Expr(:., :args, QuoteNode(S))           # args.S
-_body_expr(c::Const, idx)              = c.value
-_body_expr(::Zero{T}, idx)   where {T} = Expr(:call, :zero, T)
-_body_expr(::One{T}, idx)    where {T} = Expr(:call, :one, T)
+_slotref(S, idxs) = Expr(:ref, Expr(:., :args, QuoteNode(S)), idxs...)   # args.S[idxs...]
+_body_expr(::Slot{S}, idx) where {S} = _slotref(S, idx)
+_body_expr(::Zero{T}, idx)  where {T} = Expr(:call, :zero, T)
+_body_expr(::One{T}, idx)   where {T} = Expr(:call, :one, T)
+# A Fill broadcasts a scalar/literal — no `idx`-dependence. For an
+# `AbstractScalar` payload, reuse StencilCore's scalar codegen.
+_body_expr(f::Fill{T}, idx) where {T<:AbstractScalar} = _scalar_body_expr(f.val)
+_body_expr(f::Fill,    idx) = f.val
 # `nameof(SVector)` is `:SArray` (SVector is an alias), so name it explicitly.
 _callsym(f) = f === SVector ? :SVector : nameof(f)
 _body_expr(t::Term, idx) = Expr(:call, _callsym(t.fn), (_body_expr(a, idx) for a in t.args)...)
@@ -50,7 +52,7 @@ _shifted_ix(v, o) = o == 0 ? v : Expr(:call, :+, v, o)
 
 # --- leaf / access collection ----------------------------------------------
 _collect_acc!(a, s::Slot{S}) where {S} = (push!(a, (S, ô)); a)
-_collect_acc!(a, ::Union{Scalar, Const, Zero, One}) = a
+_collect_acc!(a, ::Union{Fill, Zero, One}) = a
 _collect_acc!(a, t::Shifted) = (push!(a, (_slotsym(t.term), t.shift)); a)
 _collect_acc!(a, t::Term)    = (foreach(x -> _collect_acc!(a, x), t.args); a)
 _accesses(t) = _collect_acc!(Tuple{Symbol, StaticShift}[], t)
@@ -60,11 +62,12 @@ _accesses(t) = _collect_acc!(Tuple{Symbol, StaticShift}[], t)
 """
     materialize(term::AbstractTerm, pairs::NamedTuple) -> LazyArray
 
-Substitute the slots/scalars named in `pairs` into `term` and lower it to a
+Substitute the slots/symbolics named in `pairs` into `term` and lower it to a
 compiled `LazyArray`. The grid rank `N` is the substituted arrays' `ndims`
 (which must agree); the result's `axes` are their axes intersected and shrunk
 inward by the term's shift footprint (no implicit broadcasting). Shifts become
-index arithmetic in the generated kernel.
+index arithmetic in the generated kernel. Method on the same generic as
+[`StencilCore.materialize`](@ref) for `AbstractScalar`.
 """
 function materialize(term::AbstractTerm, pairs::NamedTuple = (;); size = nothing)
     t = simplify(term)

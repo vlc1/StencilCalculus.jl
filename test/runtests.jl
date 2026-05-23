@@ -12,52 +12,61 @@ using StencilAssembly: build
         f = Slot{:f, Float64}()
         @test f isa AbstractTerm{Float64}
         @test eltype(f) === Float64
-        @test Slot{:g}() isa Slot{:g, Float64}         # default T = Float64
-        @test Scalar{:τ}() isa Scalar{:τ, Float64}
-        @test eltype(Scalar{:τ, Float32}()) === Float32
-        @test eltype(Const(2.0)) === Float64
-        @test Const(3).value === 3
+        @test Slot{:g}() isa Slot{:g, Float64}                  # default T = Float64
         @test eltype(Zero{Float64}()) === Float64
         @test eltype(One{Int}()) === Int
         # T must be concrete: an abstract eltype can never be materialized.
         @test_throws ArgumentError Slot{:f, Number}()
-        @test_throws ArgumentError Scalar{:s, Real}()
         @test_throws ArgumentError Zero{Integer}()
+        @test_throws ArgumentError One{Real}()
+
+        # Fill: literal payload (eltype = T) and AbstractScalar payload
+        # (eltype unwraps the scalar via recursive specialization).
+        @test Fill(2.5) isa Fill{Float64} <: AbstractTerm{Float64}
+        @test eltype(Fill(2)) === Int
+        τ = Symbolic{:τ, Float64}()
+        @test Fill(τ) isa Fill{Symbolic{:τ, Float64}} <: AbstractTerm
+        @test eltype(Fill(τ)) === Float64                      # recursive eltype
+        @test eltype(Fill(Const(2.0))) === Float64
     end
 
     @testset "constructor macros" begin
-        @slot a                                         # default T = Float64
+        @slot a                                                 # default T = Float64
         @slot b Float32
-        @scalar τ
-        @scalar dt Float32
+        @symbolic τ
+        @symbolic dt Float32
         @const α 1
         @const β 2.5
         @test a === Slot{:a, Float64}()
         @test b === Slot{:b, Float32}()
-        @test τ === Scalar{:τ, Float64}()
-        @test dt === Scalar{:dt, Float32}()
+        @test τ === Symbolic{:τ, Float64}()
+        @test dt === Symbolic{:dt, Float32}()
         @test α === Const(1)
         @test β === Const(2.5)
         # the bound name drives the symbol parameter and composes in expressions
         @slot ψ
         @test ψ === Slot{:ψ, Float64}()
-        @test (τ * ψ) isa Term{typeof(*)}
+        @test (τ * ψ) isa Term{typeof(*)}                       # Symbolic × Slot → Term
     end
 
     @testset "operator overloading builds Terms" begin
         f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
         @test (f + g) isa Term{typeof(+)}
         @test eltype(f + g) === Float64
-        # numeric literals wrap into Const
+        # numeric literals wrap into Fill(Const(…))
         t = f / 2
         @test t isa Term{typeof(/)}
-        @test t.args[2] === Const(2)
+        @test t.args[2] === Fill(Const(2))
         @test eltype(f / 2) === Float64
         # unary
         @test (-f) isa Term{typeof(-)}
         @test eltype(sin(f)) === Float64
         # mixed eltype promotes
         @test eltype(Slot{:a, Float64}() + Slot{:b, Int}()) === Float64
+        # AbstractScalar × AbstractTerm wraps the scalar in a Fill leaf.
+        τ = Symbolic{:τ, Float64}()
+        @test (τ * f) isa Term{typeof(*)}
+        @test (τ * f).args[1] === Fill(τ)
     end
 
     @testset "Term eltype: promote_op + Union{} throws" begin
@@ -72,7 +81,7 @@ using StencilAssembly: build
 
     @testset "getindex shift sugar" begin
         f = Slot{:f, Float64}()
-        @test f[] === f                                 # zero shift = identity
+        @test f[] === f                                         # zero shift = identity
         @test f[ô] === f
         sh = f[-ê₁]
         @test sh isa Shifted
@@ -85,28 +94,33 @@ using StencilAssembly: build
         g = f[-2ê₁] - 4f[-ê₁] + 3f[]
         @test g isa Term
 
-        # a Scalar is shift-invariant
-        τ = Scalar{:τ, Float64}()
-        @test τ[] === τ
-        @test τ[ê₁] === τ
-        @test τ[3ê₁ + ê₂] === τ
+        # Position-independent term leaves are shift-invariant.
+        Z = Zero{Float64}(); I1 = One{Float64}(); φ = Fill(Const(3.0))
+        @test Z[ê₁] === Z && Z[] === Z
+        @test I1[ê₁] === I1 && I1[] === I1
+        @test φ[3ê₁ + ê₂] === φ && φ[] === φ
+        # A bare AbstractScalar is also shift-invariant (handled in Core).
+        τ = Symbolic{:τ, Float64}()
+        @test τ[] === τ && τ[ê₁] === τ && τ[3ê₁ + ê₂] === τ
     end
 
     @testset "display (normal-form, component form)" begin
         f = Slot{:f, Float64}(); ϕ = Slot{:ϕ, Float64}()
-        τ = Scalar{:τ, Float64}(); x = Slot{:x, Float64}()
-        @test repr(f) == "f[]"                       # component form
-        @test repr(ϕ[ê₁]) == "ϕ[ê₁]"                 # shifted slot
+        τ = Symbolic{:τ, Float64}(); x = Slot{:x, Float64}()
+        @test repr(f) == "f[]"                                  # component form
+        @test repr(ϕ[ê₁]) == "ϕ[ê₁]"                            # shifted slot
         @test repr(f[-2ê₁]) == "f[-2ê₁]"
-        @test repr(τ) == "τ"                         # scalar by symbol
-        @test repr(Const(2.0)) == "2.0"
-        @test repr(Zero{Float64}()) == "0"           # symbolic identities (type-agnostic)
+        @test repr(τ) == "τ"                                    # bare symbolic
+        @test repr(Const(2.0)) == "2.0"                         # bare const (scalar-side)
+        @test repr(Fill(Const(2.0))) == "2.0"                   # Fill renders its payload
+        @test repr(Fill(τ)) == "τ"                              # symbolic Fill
+        @test repr(Zero{Float64}()) == "0"                      # type-agnostic glyphs
         @test repr(One{Float64}()) == "1"
-        @test repr(τ * δ₊{1}(f)) == "(τ * (f[ê₁] - f[]))"   # infix
-        @test repr(Term(exp, (x,))) == "exp(x[])"           # call form
+        @test repr(τ * δ₊{1}(f)) == "(τ * (f[ê₁] - f[]))"       # infix
+        @test repr(Term(exp, (x,))) == "exp(x[])"               # call form
         @test repr(SVector(f, x)) == "SVector(f[], x[])"
-        @test repr(-f) == "-f[]"                            # unary minus
-        # the ∂ / Diff functor
+        @test repr(-f) == "-f[]"                                # unary minus
+        # the ∂ / Diff functor (over a Slot vs a Symbolic)
         @test repr(∂(f)) == "∂(f[])"
         @test repr(∂(τ)) == "∂(τ)"
         # display shows the normal form: f - 0 collapses to f[]
@@ -115,7 +129,7 @@ using StencilAssembly: build
 
     @testset "non-local functors" begin
         f = Slot{:f, Float64}()
-        d = δ₊{1}(f)                                    # f[i+1] - f[i]
+        d = δ₊{1}(f)                                            # f[i+1] - f[i]
         @test d isa Term{typeof(-)}
         @test d.args[1] isa Shifted
         @test d.args[1].shift === ê₁
@@ -134,7 +148,9 @@ using StencilAssembly: build
         @test AbstractTrees.children(t) === (f, g)
         @test AbstractTrees.children(f) === ()
         @test AbstractTrees.nodevalue(f) === :f
-        @test AbstractTrees.nodevalue(Const(2.5)) === 2.5
+        @test AbstractTrees.nodevalue(Fill(Const(2.5))) === Const(2.5)
+        @test AbstractTrees.nodevalue(Zero{Float64}()) === 0.0
+        @test AbstractTrees.nodevalue(One{Int}()) === 1
         sh = f[ê₁]
         @test AbstractTrees.children(sh) === (f,)
         @test AbstractTrees.nodevalue(sh) === ê₁
@@ -158,10 +174,12 @@ using StencilAssembly: build
         s = simplify(d)
         @test s == (f[ê₁] + g[ê₁]) - (f + g)
 
-        # Shift over a constant is a no-op.
-        @test simplify(Shifted(ê₁, Const(2.0))) === Const(2.0)
+        # Shift over a Fill (position-independent) is a no-op.
+        @test simplify(Shifted(ê₁, Fill(Const(2.0)))) === Fill(Const(2.0))
+        @test simplify(Shifted(ê₁, Zero{Float64}())) === Z       # also Zero / One
+        @test simplify(Shifted(ê₁, One{Float64}())) === I1
 
-        # Identity / annihilator on Zero/One.
+        # Identity / annihilator on Zero/One (type-dispatched).
         @test simplify(f + Z) === f
         @test simplify(Z + f) === f
         @test simplify(f * I1) === f
@@ -170,32 +188,51 @@ using StencilAssembly: build
         @test simplify(Z - f) == -f
         @test simplify(f / I1) === f
 
+        # Identity on `Fill{<:Null}` / `Fill{<:Unity}` (type-dispatched through Fill).
+        nf = Fill(Null{Float64}()); uf = Fill(Unity{Float64}())
+        @test simplify(f * uf) === f
+        @test simplify(f * nf) === Zero{Float64}()
+        @test simplify(f + nf) === f
+
+        # Value-based identity on `Fill{<:Const}` (mathematically correct;
+        # the previous "strict no-auto-fold" stance is intentionally walked
+        # back — the new design treats a literal Fill(Const(0)) as a real zero).
+        @test simplify(f * Fill(Const(0.0))) === Zero{Float64}()
+        @test simplify(f * Fill(Const(1.0))) === f
+
         # Double negation.
         @test simplify(-(-f)) === f
 
-        # Constant folding — produces Const, NOT Zero (strict, no auto-fold).
+        # Scalar-side folding through scalar simplify (Core's rule_fold_scalar).
         @test simplify(Const(2.0) + Const(3.0)) === Const(5.0)
         @test simplify(Const(2.0) * Const(0.0)) === Const(0.0)
-        @test !(simplify(Const(2.0) * Const(0.0)) isa Zero)
 
-        # A nested mix folds and collapses.
-        @test simplify((f + Z) * (Const(2.0) + Const(3.0))) == f * Const(5.0)
+        # rule_fill_collapse: all-Fill `Term` becomes one Fill-of-Scalar,
+        # whose inner scalar is then simplified by Core.
+        coll = simplify(Fill(Const(2.0)) + Fill(Const(3.0)))
+        @test coll === Fill(Const(5.0))
+        @test simplify(Fill(Const(2.0)) * Fill(Symbolic{:τ, Float64}())) ==
+              Fill(Scalar(*, (Const(2.0), Symbolic{:τ, Float64}())))
+
+        # A nested mix folds (in scalar-land), collapses to a Fill, then leaves
+        # the outer Term(*) intact (no further annihilation since 5 ≠ 0/1).
+        @test simplify((f + Z) * (Fill(Const(2.0)) + Fill(Const(3.0)))) == f * 5.0
     end
 
     @testset "differentiate" begin
         f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
 
         @testset "forward difference δ₊{1}(f)" begin
-            sst = differentiate(δ₊{1}(f), f)            # f[i+1] - f[i]
+            sst = differentiate(δ₊{1}(f), f)                    # f[i+1] - f[i]
             @test sst isa Stencil
             @test AccessStyle(sst) === RowAccess()
-            @test sst.shifts === (ô, ê₁)                # reverse-lex (offset 0, then +1)
+            @test sst.shifts === (ô, ê₁)                        # reverse-lex (offset 0, then +1)
             @test sst.terms == (Term(-, (One{Float64}(),)), One{Float64}())   # SoA: one coef per offset
             # narrows to a contiguous LinearStencil along axis 1, offsets 0:1
             ln = as_linear(sst)
             @test ln isa LinearStencil{1, 0, 2}
             @test AccessStyle(ln) === RowAccess()
-            @test ln.term == Term(SVector, sst.terms)   # SoA terms interlaced into AoS
+            @test ln.term == Term(SVector, sst.terms)           # SoA terms interlaced into AoS
         end
 
         @testset "the design-doc example" begin
@@ -208,53 +245,52 @@ using StencilAssembly: build
 
         @testset "variable coefficient: ∂(f*g)/∂f = g" begin
             sst = differentiate(f * g, f)
-            @test sst.shifts === (ô,)                   # local (diagonal)
-            # the lone coefficient is g (a Slot ⇒ a position-dependent coefficient)
+            @test sst.shifts === (ô,)                           # local (diagonal)
             @test sst.terms == (g,)
         end
 
         @testset "nonlinear: ∂(f*f)/∂f = f + f" begin
             sst = differentiate(f * f, f)
             @test sst.shifts === (ô,)
-            @test sst.terms == (f + f,)                 # summed at the shared offset
+            @test sst.terms == (f + f,)                         # summed at the shared offset
         end
 
         @testset "Laplacian-shape narrows to a star" begin
             # δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f)) ⇒ 2-D L=1 five-point star.
             lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))
             sst = differentiate(lap, f)
-            @test sst.shifts === (-ê₂, -ê₁, ô, ê₁, ê₂)  # reverse-lex star order
+            @test sst.shifts === (-ê₂, -ê₁, ô, ê₁, ê₂)          # reverse-lex star order
             @test as_star(sst) isa StarStencil{1, 2, 5}
         end
 
         @testset "independent / constant ⇒ error" begin
-            @test_throws ArgumentError differentiate(g, f)        # g ≠ f
-            @test_throws ArgumentError differentiate(Const(2.0) * g, f)
+            @test_throws ArgumentError differentiate(g, f)            # g ≠ f
+            @test_throws ArgumentError differentiate(Const(2.0) * g, f)  # constant-coef ⊥ f
         end
 
-        @testset "∂ / Diff functor + differentiation w.r.t. a Scalar" begin
-            τ = Scalar{:τ, Float64}()
-            # w.r.t. a Scalar → an AbstractTerm (no spatial offsets)
+        @testset "∂ / Diff functor + differentiation w.r.t. a Symbolic" begin
+            τ = Symbolic{:τ, Float64}()
+            # w.r.t. a Symbolic → an AbstractTerm (no spatial offsets)
             @test ∂(τ)(τ * f) === f
             @test differentiate(τ * f, τ) === f
-            @test ∂(f)(τ * f) == differentiate(τ * f, f)          # w.r.t. a Slot → Stencil
+            @test ∂(f)(τ * f) == differentiate(τ * f, f)        # w.r.t. a Slot → Stencil
             @test ∂(f)(τ * f) isa Stencil
-            # a Slot and a Scalar of the same symbol do not collide
+            # a Slot and a Symbolic of the same symbol do not collide
             s = Slot{:τ, Float64}()
-            @test ∂(τ)(τ * s) === s                               # ∂/∂(scalar τ)
-            @test ∂(s)(τ * s) isa Stencil                         # ∂/∂(slot τ)
-            # independence throws for the Scalar path too
+            @test ∂(τ)(τ * s) === s                             # ∂/∂(symbolic τ)
+            @test ∂(s)(τ * s) isa Stencil                       # ∂/∂(slot τ)
+            # independence throws for the Symbolic path too
             @test_throws ArgumentError differentiate(f, τ)
             # the default-typed pipeline works now that T is concrete (Float64)
             @slot fd
-            @scalar td
+            @symbolic td
             @test ∂(td)(td * fd) === fd
             @test ∂(fd)(td * fd) isa Stencil
         end
     end
 
     @testset "materialize" begin
-        f = Slot{:f, Float64}(); g = Slot{:g, Float64}(); τ = Scalar{:τ, Float64}()
+        f = Slot{:f, Float64}(); g = Slot{:g, Float64}(); τ = Symbolic{:τ, Float64}()
 
         @testset "local elementwise" begin
             fv = collect(1.0:6.0); gv = collect(10.0:10.0:60.0)
@@ -267,13 +303,13 @@ using StencilAssembly: build
 
         @testset "shift shrinks axes (forward difference)" begin
             fv = rand(16)
-            la = materialize(δ₊{1}(f), (f = fv,))     # f[i+1] - f[i]
+            la = materialize(δ₊{1}(f), (f = fv,))               # f[i+1] - f[i]
             @test axes(la) == (1:15,)
             @test la[1] == fv[2] - fv[1]
             @test [la[i] for i in 1:15] == diff(fv)
         end
 
-        @testset "scalar parameter (un-indexed)" begin
+        @testset "symbolic parameter (un-indexed)" begin
             fv = collect(1.0:5.0)
             la = materialize(τ * f, (f = fv, τ = 0.5))
             @test la[4] == 0.5 * fv[4]
@@ -282,7 +318,7 @@ using StencilAssembly: build
 
         @testset "2-D + intersection of shifted axes" begin
             fv = reshape(collect(1.0:20.0), 4, 5)
-            la = materialize(f[ê₁] - f[ê₂], (f = fv,))   # f[i+1,j] - f[i,j+1]
+            la = materialize(f[ê₁] - f[ê₂], (f = fv,))          # f[i+1,j] - f[i,j+1]
             @test axes(la) == (1:3, 1:4)
             @test la[2, 3] == fv[3, 3] - fv[2, 4]
         end
@@ -309,18 +345,16 @@ using StencilAssembly: build
             n = 6
             st = build_stencil(sst; size = (n,))
             @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, <:Any, ColumnAccess}
-            @test st.term[1] == SVector(-1.0, 1.0)        # column-anchored coefficients
-            # assembles to the same matrix as the directly-built stencil
+            @test st.term[1] == SVector(-1.0, 1.0)              # column-anchored coefficients
             ref = build(LinearStencil{1}(SUnitRange(0, 1), fill(SVector(-1.0, 1.0), n)),
                         (1:n,), (1:n,))
             @test build(st, (1:n,), (1:n,)) == ref
-            # and that matrix IS the forward difference: (A f)[i] = f[i+1]-f[i]
             A = build(st, (1:n,), (1:n,)); fv = rand(n)
             @test (A * fv)[1:n-1] ≈ diff(fv)
         end
 
         @testset "Laplacian (constant) → StarStencil, end-to-end" begin
-            lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))   # +Laplacian: f[i±1]+f[j±1]-4f
+            lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))             # +Laplacian: f[i±1]+f[j±1]-4f
             sst = differentiate(lap, f)
             n1, n2 = 5, 4
             st = build_stencil(sst; size = (n1, n2))
@@ -341,18 +375,18 @@ using StencilAssembly: build
             @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, <:Any, ColumnAccess}
             # column c=3 (within the shrunk axes): SVector(-ψ[3], ψ[2])
             @test st.term[3] == SVector(-ψv[3], ψv[2])
-            @test axes(st.term, 1) == 2:8           # shrunk by the −1 coefficient shift
+            @test axes(st.term, 1) == 2:8                       # shrunk by the −1 coefficient shift
         end
 
         @testset "offset-padding (densify) for a gappy result" begin
             f = Slot{:f, Float64}()
-            sst = differentiate(f[-2ê₁] + 3f[], f)   # offsets {-2, 0} — gap at -1
+            sst = differentiate(f[-2ê₁] + 3f[], f)              # offsets {-2, 0} — gap at -1
             @test sst.shifts === (-2ê₁, ô)
 
             # densify fills the gap with a Zero coefficient.
             d = densify(sst)
             @test d.shifts === (-2ê₁, -ê₁, ô)
-            @test d.terms[2] isa Zero                # inserted at offset -1
+            @test d.terms[2] isa Zero                           # inserted at offset -1
 
             n = 7
             # without padding, the gappy stencil cannot narrow

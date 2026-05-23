@@ -1,62 +1,49 @@
 # Symbolic differentiation of a (normal-form) grid expression with respect to
-# a Slot, producing a `StencilCore.Stencil{RowAccess}`.
+# a Slot (→ `StencilCore.Stencil{RowAccess}`) or a Symbolic scalar parameter
+# (→ `AbstractTerm`). Methods on the same `differentiate` / `derivative`
+# generics that StencilCore's scalar-side machinery uses — disjoint dispatch
+# on `Vararg{AbstractTerm}` vs `Vararg{AbstractScalar}`.
 #
-# The result is **row-anchored**: the coefficient at offset `σ` is `∂F/∂(f[σ])`
-# evaluated at the equation/row index — no shifts are injected (the Row→Column
-# conversion lives in the assembly bridge). Neutral elements are the type-level
-# `Zero`/`One`, so the chain rule collapses under `simplify`.
+# The Slot path is **row-anchored**: the coefficient at offset `σ` is
+# `∂F/∂(f[σ])` evaluated at the equation/row index — no shifts are injected
+# (the Row→Column conversion lives in the assembly bridge). Neutral elements
+# are the type-level `Zero`/`One`, so the chain rule collapses under
+# `simplify`.
 
-# --- Derivative table (frule-shape: ∂f/∂(arg i)) ---------------------------
-
-"""
-    derivative(f, ::Val{i}, args...) -> AbstractTerm
-
-The symbolic partial derivative `∂f/∂(argᵢ)` of a primitive `f` applied to
-`args` (in the ChainRules `frule` style). Returns a term; the `0`/`1` cases use
-the type-level `Zero`/`One`. Extend it to teach `differentiate` a new primitive:
-
-```julia
-StencilCalculus.derivative(::typeof(myfun), ::Val{1}, x) = ...
-```
-"""
-function derivative end
+# --- Derivative table (frule-shape: ∂f/∂(arg i); term-side, Vararg{AbstractTerm}) ---
 
 _pe(args) = mapreduce(eltype, promote_type, args)   # promoted element type
 
-derivative(::typeof(+), ::Val,    args...) = One{_pe(args)}()
-derivative(::typeof(-), ::Val{1}, x)       = -One{eltype(x)}()
-derivative(::typeof(-), ::Val{1}, x, y)    = One{_pe((x, y))}()
-derivative(::typeof(-), ::Val{2}, x, y)    = -One{_pe((x, y))}()
-derivative(::typeof(*), ::Val{1}, x, y)    = y
-derivative(::typeof(*), ::Val{2}, x, y)    = x
-derivative(::typeof(/), ::Val{1}, x, y)    = Term(/, (One{_pe((x, y))}(), y))
-derivative(::typeof(/), ::Val{2}, x, y)    = Term(-, (Term(/, (x, Term(*, (y, y)))),))
-derivative(::typeof(^), ::Val{1}, x, n)    = Term(*, (n, Term(^, (x, Term(-, (n, One{_pe((n,))}()))))))
-derivative(::typeof(sin),  ::Val{1}, x)    = Term(cos, (x,))
-derivative(::typeof(cos),  ::Val{1}, x)    = Term(-, (Term(sin, (x,)),))
-derivative(::typeof(exp),  ::Val{1}, x)    = Term(exp, (x,))
-derivative(::typeof(log),  ::Val{1}, x)    = Term(/, (One{_pe((x,))}(), x))
-derivative(::typeof(sqrt), ::Val{1}, x)    = Term(/, (One{_pe((x,))}(), Term(*, (Const(2), Term(sqrt, (x,))))))
-derivative(f, ::Val, args...) = throw(ArgumentError("no derivative rule for $(f)"))
+derivative(::typeof(+), ::Val,    args::Vararg{AbstractTerm}) = One{_pe(args)}()
+derivative(::typeof(-), ::Val{1}, x::AbstractTerm)            = Term(-, (One{eltype(x)}(),))
+derivative(::typeof(-), ::Val{1}, x::AbstractTerm, y::AbstractTerm) = One{_pe((x, y))}()
+derivative(::typeof(-), ::Val{2}, x::AbstractTerm, y::AbstractTerm) = Term(-, (One{_pe((x, y))}(),))
+derivative(::typeof(*), ::Val{1}, x::AbstractTerm, y::AbstractTerm) = y
+derivative(::typeof(*), ::Val{2}, x::AbstractTerm, y::AbstractTerm) = x
+derivative(::typeof(/), ::Val{1}, x::AbstractTerm, y::AbstractTerm) = Term(/, (One{_pe((x, y))}(), y))
+derivative(::typeof(/), ::Val{2}, x::AbstractTerm, y::AbstractTerm) = Term(-, (Term(/, (x, Term(*, (y, y)))),))
+derivative(::typeof(^), ::Val{1}, x::AbstractTerm, n::AbstractTerm) =
+    Term(*, (n, Term(^, (x, Term(-, (n, One{_pe((n,))}()))))))
+derivative(::typeof(sin),  ::Val{1}, x::AbstractTerm) = Term(cos, (x,))
+derivative(::typeof(cos),  ::Val{1}, x::AbstractTerm) = Term(-, (Term(sin, (x,)),))
+derivative(::typeof(exp),  ::Val{1}, x::AbstractTerm) = Term(exp, (x,))
+derivative(::typeof(log),  ::Val{1}, x::AbstractTerm) = Term(/, (One{_pe((x,))}(), x))
+derivative(::typeof(sqrt), ::Val{1}, x::AbstractTerm) =
+    Term(/, (One{_pe((x,))}(), Term(*, (Fill(Const(2)), Term(sqrt, (x,))))))
+derivative(f, ::Val, args::Vararg{AbstractTerm}) =
+    throw(ArgumentError("no term derivative rule for $(f)"))
 
-# --- Per-offset contribution collection ------------------------------------
+# --- Per-offset contribution collection (Slot path) ------------------------
 
 const _Contrib = Pair{StaticShift, AbstractTerm}
 
 _slotsym(::Slot{S}) where {S} = S
 
-# The differentiation variable is passed as an instance (a Slot or Scalar) so
-# that a Slot and a Scalar sharing a symbol do not collide: each matches only
-# its own kind of the same symbol and is inert with respect to the other.
-_diff(::Union{Const, Zero, One}, ::AbstractTerm) = _Contrib[]
+# Position-independent leaves (Fill, Zero, One) have no Slot dependence.
+_diff(::Union{Fill, Zero, One}, ::Slot) = _Contrib[]
 
 _diff(::Slot{S2, T}, ::Slot{S}) where {S2, T, S} =
     S2 === S ? _Contrib[ô => One{T}()] : _Contrib[]
-_diff(::Slot, ::Scalar) = _Contrib[]
-
-_diff(::Scalar{S2, T}, ::Scalar{S}) where {S2, T, S} =
-    S2 === S ? _Contrib[ô => One{T}()] : _Contrib[]
-_diff(::Scalar, ::Slot) = _Contrib[]
 
 function _diff(sh::Shifted, ::Slot{S}) where {S}
     sl = sh.term
@@ -65,9 +52,8 @@ function _diff(sh::Shifted, ::Slot{S}) where {S}
         "Shifted over $(typeof(sl)). Call simplify first."))
     _slotsym(sl) === S ? _Contrib[sh.shift => One{eltype(sh)}()] : _Contrib[]
 end
-_diff(::Shifted, ::Scalar) = _Contrib[]   # a shifted slot is inert w.r.t. a scalar
 
-function _diff(t::Term, v::AbstractTerm)
+function _diff(t::Term, v::Slot)
     out = _Contrib[]
     for (i, arg) in enumerate(t.args)
         sub = _diff(arg, v)
@@ -80,7 +66,31 @@ function _diff(t::Term, v::AbstractTerm)
     return out
 end
 
-# --- Grouping, reverse-lex ordering, assembly ------------------------------
+# --- Differentiation w.r.t. a Symbolic (scalar parameter) ------------------
+# A Symbolic appears in a term only inside a `Fill`, so the derivative
+# collapses to a per-cell broadcast coefficient. Walking strategy: like the
+# Slot path, but without spatial offsets — accumulate one AbstractTerm.
+
+_diff_scalar(::Union{Slot, Shifted, Zero, One}, ::Symbolic) = nothing
+function _diff_scalar(f::Fill{<:AbstractScalar}, v::Symbolic)
+    d = differentiate(f.val, v)
+    d isa Null ? nothing : Fill(d)
+end
+_diff_scalar(::Fill, ::Symbolic) = nothing                      # literal Fill: no dependence
+
+function _diff_scalar(t::Term, v::Symbolic)
+    out = nothing
+    for (i, arg) in enumerate(t.args)
+        sub = _diff_scalar(arg, v)
+        sub === nothing && continue
+        dfn     = derivative(t.fn, Val(i), t.args...)
+        contrib = simplify(Term(*, (dfn, sub)))
+        out = (out === nothing) ? contrib : simplify(Term(+, (out, contrib)))
+    end
+    return out
+end
+
+# --- Grouping, reverse-lex ordering, assembly (Slot path) ------------------
 
 # Sum coefficients sharing an offset; preserve first-seen order.
 function _group(contribs::Vector{_Contrib})
@@ -119,7 +129,7 @@ the coefficient `∂t/∂(f[σ_k])`. Throws if `t` does not depend on `S`
 """
 function differentiate(t::AbstractTerm, v::Slot{S}) where {S}
     shifts, coefs = _group(_diff(simplify(t), v))
-    keep = findall(c -> !(c isa Zero), coefs)
+    keep = findall(c -> !_is_term_zero(c), coefs)
     shifts, coefs = shifts[keep], coefs[keep]
     isempty(shifts) && throw(ArgumentError(
         "the expression does not depend on Slot :$(S); its derivative is " *
@@ -132,19 +142,17 @@ function differentiate(t::AbstractTerm, v::Slot{S}) where {S}
 end
 
 """
-    differentiate(t::AbstractTerm, ::Scalar{S}) -> AbstractTerm
+    differentiate(t::AbstractTerm, ::Symbolic{S}) -> AbstractTerm
 
-Differentiate `t` with respect to the broadcast parameter named `S`. A scalar
-carries no spatial offset, so the per-offset structure collapses: the result is
-a single coefficient **term** (not a `Stencil`). Throws if `t` does not depend
-on `S`.
+Differentiate `t` with respect to the named scalar parameter `S`. A Symbolic
+appears in `t` only inside a [`Fill`](@ref), so the derivative is a per-cell
+broadcast coefficient (a single `AbstractTerm`, not a `Stencil`). Throws if
+`t` does not depend on `S`.
 """
-function differentiate(t::AbstractTerm, v::Scalar{S}) where {S}
-    _, coefs = _group(_diff(simplify(t), v))   # all contributions sit at ô
-    keep = findall(c -> !(c isa Zero), coefs)
-    isempty(keep) && throw(ArgumentError(
-        "the expression does not depend on Scalar :$(S); its derivative is " *
-        "identically zero"))
-    coefs = coefs[keep]
-    length(coefs) == 1 ? coefs[1] : foldl((a, b) -> simplify(Term(+, (a, b))), coefs)
+function differentiate(t::AbstractTerm, v::Symbolic{S}) where {S}
+    out = _diff_scalar(simplify(t), v)
+    out === nothing && throw(ArgumentError(
+        "the expression does not depend on Symbolic :$(S); its derivative " *
+        "is identically zero"))
+    simplify(out)
 end
