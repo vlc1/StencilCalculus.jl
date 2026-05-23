@@ -5,10 +5,12 @@ matrix.
 
 ## Building expressions
 
-Discrete fields are [`Slot`](@ref)s; parameters are [`Scalar`](@ref)s. Pointwise
-operators combine them, and the non-local functors
-[`δ₊`/`δ₋`/`σ₊`/`σ₋`](@ref FwdDiff) apply forward/backward differences and sums
-along a chosen axis. Indexing a slot shifts it by a lattice offset:
+Discrete fields are [`Slot`](@ref)s; cell-level parameters are
+[`Symbolic`](@ref)s (named, runtime-substituted) and [`Const`](@ref)s
+(literal); both come from StencilCore. Pointwise operators combine them, and
+the non-local functors [`δ₊`/`δ₋`/`σ₊`/`σ₋`](@ref FwdDiff) apply
+forward/backward differences and sums along a chosen axis. Indexing a slot
+shifts it by a lattice offset:
 
 ```julia
 using StencilCalculus
@@ -19,22 +21,49 @@ g = f[-2ê₁] - 4f[-ê₁] + 3f[]      # f[i-2] - 4 f[i-1] + 3 f[i]
 adv = ψ * δ₊{1}(f)                # ψ[i] * (f[i+1] - f[i])
 ```
 
-The `@slot`/`@scalar`/`@const` macros bind a variable to a leaf named after it
-(`@slot f` ≡ `f = Slot{:f, Float64}()`); the type argument defaults to
-`Float64` and must be **concrete** (it is the type the term materializes into).
-The element type is computed at construction, so an ill-typed expression is
-rejected early. `Scalar`s materialize to a single broadcast value (e.g. a
-timestep), unlike `Slot`s which materialize to per-cell arrays.
+The `@slot` / `@symbolic` / `@const` macros bind a variable to a leaf named
+after it (`@slot f` ≡ `f = Slot{:f, Float64}()`); the type argument defaults
+to `Float64` and must be **concrete** (it is the type the term materializes
+into). The element type is computed at construction, so an ill-typed
+expression is rejected early.
+
+A bare `Symbolic` or `Const` is an [`AbstractScalar`](@ref) — *not* an
+`AbstractTerm`. The operators lift it into term-land via a
+[`Fill`](@ref) leaf the moment it interacts with a real term:
+
+```julia
+@symbolic τ Float64                   # τ isa Symbolic <: AbstractScalar
+τ * f                                 # Term(*, (Fill(τ), f)) — Fill wraps τ
+@const α 2
+α + f                                 # Term(+, (Fill(α), f))
+2 * f                                 # Term(*, (Fill(Const(2)), f))
+```
+
+`Symbolic`s materialize to a single broadcast value (e.g. a timestep), unlike
+`Slot`s which materialize to per-cell arrays.
 
 ## Simplifying
 
 [`simplify`](@ref) rewrites to a normal form — shifts pushed onto the leaves,
-nested shifts merged, identities collapsed:
+nested shifts merged, identities collapsed, and **all-`Fill` sub-expressions
+folded into one `Fill(Scalar(…))`** (the scalar-precedence rule: scalar
+arithmetic done once at compile time, not broadcast cell-by-cell):
 
 ```julia
 @slot g Float64
-simplify(δ₊{1}(f + g))   # (f[ê₁] + g[ê₁]) - (f + g)
+simplify(δ₊{1}(f + g))               # (f[ê₁] + g[ê₁]) - (f + g)
+
+# All-Fill collapse + scalar folding in one pass:
+simplify(Fill(Const(2.0)) + Fill(Const(3.0)))   # Fill(Const(5.0))
+simplify(2 * (f + 3*f))                         # (2*1 + 2*3 = 8) ⇒ collapses inside Fill
 ```
+
+The identity rules detect a structural `Zero`/`One` *by type*, a
+`Fill{<:Null}`/`Fill{<:Unity}` *by type* (matching the scalar-side dispatch),
+and a literal `Fill{<:Const}` *by value* (`iszero`/`isone` on the wrapped
+literal). The last is a deliberate departure from a stricter no-auto-fold
+stance — `f * Fill(Const(0.0))` annihilates to `Zero{Float64}()`, which is
+mathematically correct.
 
 ## Differentiating into a stencil
 
@@ -42,7 +71,7 @@ simplify(δ₊{1}(f + g))   # (f[ê₁] + g[ê₁]) - (f + g)
 whose per-offset coefficients are the partial derivatives:
 
 ```julia
-differentiate(δ₊{1}(f), f)               # offsets (ô, ê₁), coefficients (-1, 1)
+differentiate(δ₊{1}(f), f)           # offsets (ô, ê₁), coefficients (-1, 1)
 
 # variable coefficient — ∂(ψ·δ₊{1}(f))/∂f
 @slot ψ Float64
@@ -58,6 +87,20 @@ A Laplacian-shaped expression differentiates to the five-point star:
 lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))   # f[i±1] + f[j±1] - 4 f
 differentiate(lap, f)                     # a Stencil that narrows to a star
 ```
+
+Differentiating with respect to a `Symbolic` collapses the per-offset
+structure to a single broadcast coefficient (an `AbstractTerm`, not a
+`Stencil`):
+
+```julia
+@symbolic τ Float64
+differentiate(τ * f, τ)              # === f       (a term)
+differentiate(τ * f, f)              # a Stencil   (offset ô, coefficient Fill(τ))
+```
+
+The scalar pieces of the expression — anything inside a `Fill{<:AbstractScalar}`
+— are differentiated by StencilCore's scalar `differentiate`; the result is
+re-wrapped in a `Fill` on the way back into term-land.
 
 ## Building and assembling
 
@@ -98,3 +141,7 @@ la = materialize(adv, (f = fv, ψ = ψv))     # axes (1:15,); la[i] = ψv[i]*(fv
 
 print(code_string(adv; name = :advect))
 ```
+
+A `Fill` materializes its wrapped value (recursively, for an
+`AbstractScalar`) once per cell — so `materialize(τ * f, (f = fv, τ = 0.5))`
+gives a kernel that reads `args.τ * args.f[i]`, not `args.τ[i] * args.f[i]`.

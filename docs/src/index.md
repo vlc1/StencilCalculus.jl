@@ -4,9 +4,9 @@ StencilCalculus is a small Computer Algebra System for expressions on N-D
 Cartesian grids, with one purpose: **build sparse stencils by differentiating
 them**. It is the symbolic front of a small stack — it depends on
 [StencilCore](https://vlc1.github.io/StencilCore.jl/dev/) for the term and
-stencil types, and hands its results to
-[StencilAssembly](https://vlc1.github.io/StencilAssembly.jl/dev/) for assembly
-into a `SparseMatrixCSC`.
+stencil types (and for the parallel **scalar** algebra), and hands its
+results to [StencilAssembly](https://vlc1.github.io/StencilAssembly.jl/dev/)
+for assembly into a `SparseMatrixCSC`.
 
 ## Why differentiate a grid expression?
 
@@ -32,6 +32,26 @@ let the package **differentiate** it into a stencil.
     exactly what assembling into a `SparseMatrixCSC` does. We use the word
     loosely; the package makes the flattening precise.
 
+## Two algebras, one bridge
+
+A grid expression has two kinds of leaves:
+
+- **Spatially-extended fields** ([`Slot`](@ref)) — substituted with an array
+  at `materialize`, indexed per cell.
+- **Cell-level scalars** (`AbstractScalar`: [`Symbolic`](@ref),
+  [`Const`](@ref), [`Null`](@ref), [`Unity`](@ref), and the interior
+  `Scalar` tree node) — defined in StencilCore, materialize to a single
+  value, never carry a spatial index.
+
+These are sibling algebras: a `Term.args` tuple is always
+`Tuple{Vararg{AbstractTerm}}`, *never* mixed with scalars. Scalars cross
+into term-land via **[`Fill`](@ref)** — a `Fill{T} <: AbstractTerm{T}` is the
+spatially-invariant broadcast of one value (literal or `AbstractScalar`).
+`eltype(Fill{<:AbstractScalar})` unwraps recursively so e.g.
+`Slot{:f,Float64}() + Fill(τ)` promotes to `Float64`. Operators on the
+boundary do the lifting for you: `2 * f`, `τ * f`, `α + f` all build
+`Term`s with `Fill(…)` leaves.
+
 ## How it fits together
 
 The data structures follow one rule, inherited from StencilCore — **type
@@ -39,15 +59,18 @@ parameters are structure; values are data**: lattice offsets live at the type
 level, coefficients are ordinary (or lazy) arrays.
 
 1. **Build** an expression from [`Slot`](@ref)s (discrete fields),
-   [`Scalar`](@ref)s (parameters), pointwise operators, and the non-local
-   difference/sum functors [`δ₊`/`δ₋`/`σ₊`/`σ₋`](@ref FwdDiff). Index sugar
-   `f[-ê₁]` shifts a field.
+   [`Symbolic`](@ref)s and [`Const`](@ref)s (scalar parameters and literals,
+   from StencilCore), pointwise operators, and the non-local difference/sum
+   functors [`δ₊`/`δ₋`/`σ₊`/`σ₋`](@ref FwdDiff). Index sugar `f[-ê₁]` shifts
+   a field.
 2. [`simplify`](@ref) the expression to normal form (shifts pushed onto the
-   leaves; identities collapsed).
+   leaves; identities collapsed; all-`Fill` sub-expressions collapsed via the
+   scalar-precedence rule into a single `Fill(Scalar(…))`).
 3. [`differentiate`](@ref) with respect to a `Slot` → a row-anchored
-   `Stencil`.
-4. [`build_stencil`](@ref) converts it to a column-anchored, assemblable
-   `LinearStencil`/`StarStencil`, materializing the coefficients.
+   `Stencil`; or with respect to a `Symbolic` → an `AbstractTerm`
+   (per-cell broadcast coefficient).
+4. [`build_stencil`](@ref) converts the slot derivative to a column-anchored,
+   assemblable `LinearStencil`/`StarStencil`, materializing the coefficients.
 5. Assemble the result with
    [StencilAssembly](https://vlc1.github.io/StencilAssembly.jl/dev/).
 
