@@ -44,16 +44,16 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 
 ## What it provides
 
-- **Term types** `Slot{S,T}` (per-cell field), `Scalar{S,T}` (broadcast
-  parameter), `Const`, the type-level identities `Zero`/`One`, `Term`, and
-  `Shifted`; the (concrete) element type `T` is computed at construction. The
-  `@slot`, `@scalar`, and `@const` macros bind a variable to a leaf named after
-  it (`@slot f` ≡ `f = Slot{:f, Float64}()`; the type defaults to `Float64`).
+- **Term types** `Slot{S,T}` (per-cell field), `Fill{T}` (scalar broadcast),
+  the type-level identities `Zero`/`One`, `Pointwise`, and `Shifted`; the
+  (concrete) element type `T` is computed at construction. The `@slot` macro
+  binds a variable to a leaf named after it
+  (`@slot f` ≡ `f = Slot{:f, Float64}()`; the type defaults to `Float64`).
 - **DSL**: component-wise operator overloads, `SVector` interception, indexing
   sugar `f[-2ê₁]` (shift by a `StaticShift`), and the difference / sum functors
   `δ₊`/`δ₋`/`σ₊`/`σ₋` (`FwdDiff`/`BwdDiff`/`FwdSum`/`BwdSum`).
 - **`simplify`** — a rule rewriter (shift composition/pushdown, identities on
-  `Zero`/`One`, constant folding).
+  `Zero`/`One`, constant folding via `POINTWISE_DEFAULT_RULES`).
 - **`differentiate(t, ::Slot)`** — row-anchored symbolic differentiation onto a
   `Stencil{RowAccess}`.
 - **`materialize`** / **`code_string`** — codegen to a `LazyArray` (via
@@ -61,6 +61,33 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 - **`build_stencil`** — convert (Row→Column), `materialize`, and narrow
   (`as_linear`/`as_star`, with optional `densify` padding) to an assemblable
   `LinearStencil`/`StarStencil`.
+
+## Two CAS layers
+
+StencilCalculus is built on top of a scalar CAS in StencilCore. Each layer has
+its own type hierarchy; `Fill` is the one-way bridge that promotes a
+position-independent scalar into the pointwise world.
+
+| Concept | `AbstractScalar` (StencilCore) | `AbstractPointwise` (StencilCalculus) |
+|---|---|---|
+| Abstract supertype | `AbstractScalar{T}` | `AbstractPointwise{T}` |
+| Named symbolic leaf | `Var{S,T}` | `Slot{S,T}` |
+| Literal / constant leaf | `Constant{T}(val)` | `Fill(Constant(val))` |
+| Interior (composite) node | `Scalar{F,A,T}` | `Pointwise{F,A,T}` |
+| Additive identity (structural zero) | `Null{T}` | `Zero{T}` |
+| Multiplicative identity (structural one) | `Unity{T}` | `One{T}` |
+| Spatial shift node | — | `Shifted{Sh,T,U}` |
+| Scalar-to-pointwise bridge | — (source) | `Fill{T}` (wraps `AbstractScalar`) |
+| Constructor macro | `@var` | `@slot` |
+| Default simplify rule set | `SCALAR_DEFAULT_RULES` | `POINTWISE_DEFAULT_RULES` |
+| Register a derivative rule | `@scalar_rule` | `@pointwise_rule` |
+| `differentiate` return type | `AbstractScalar` | `Stencil{RowAccess}` |
+
+The `Null`/`Zero` and `Unity`/`One` pairs are structurally identical in
+purpose — type-level identities that let `simplify` and `differentiate`
+collapse algebraically by dispatch. They differ in `T`: scalar-side types
+require a Bool-shaped `T` (routing through `_to_bool_shape`); pointwise-side
+types accept any concrete element type directly.
 
 ## Design principle: type parameters are *structure*, values are *data*
 
@@ -75,13 +102,13 @@ data** — values computed or substituted later.
   level, with a `+`/`-`/`*` algebra evaluated by the compiler.
 - **General coefficients are data.** Arbitrary (possibly non-`isbits`,
   position-dependent) values would explode the type domain and wreck inference,
-  so they live in `Const`'s runtime field and in the substituted slot arrays.
+  so they live in `Constant`'s runtime field and in the substituted slot arrays.
 - **`0` and `1` are the exception — because they *are* structure.** The
   additive/multiplicative identities are the neutral and annihilating elements
   that make differentiation collapse and let `simplify` rewrite *by dispatch*
   (`Zero + x → x`, `One * x → x`, `_ * Zero → Zero`) with no runtime
   `iszero`/`isone` probing. That is why — and *only* why — they are promoted to
-  the type level as `Zero{T}` / `One{T}`. A user-written `Const(0)` is left
+  the type level as `Zero{T}` / `One{T}`. A user-written `Fill(Constant(0.0))` is left
   alone (the input is assumed reasonably simplified).
 
 This split is what lets the same expression be reasoned about symbolically
