@@ -42,7 +42,7 @@ _body_expr(f::Fill{T}, idx) where {T<:AbstractScalar} = _scalar_body_expr(f.val)
 _body_expr(f::Fill,    idx) = f.val
 # `nameof(SVector)` is `:SArray` (SVector is an alias), so name it explicitly.
 _callsym(f) = f === SVector ? :SVector : nameof(f)
-_body_expr(t::Term, idx) = Expr(:call, _callsym(t.fn), (_body_expr(a, idx) for a in t.args)...)
+_body_expr(t::Pointwise, idx) = Expr(:call, _callsym(t.fn), (_body_expr(a, idx) for a in t.args)...)
 function _body_expr(t::Shifted, idx)
     t.term isa Slot || error("materialize/code_string expect normal-form input (shifts on slots)")
     _slotref(_slotsym(t.term),
@@ -54,13 +54,13 @@ _shifted_ix(v, o) = o == 0 ? v : Expr(:call, :+, v, o)
 _collect_acc!(a, s::Slot{S}) where {S} = (push!(a, (S, ô)); a)
 _collect_acc!(a, ::Union{Fill, Zero, One}) = a
 _collect_acc!(a, t::Shifted) = (push!(a, (_slotsym(t.term), t.shift)); a)
-_collect_acc!(a, t::Term)    = (foreach(x -> _collect_acc!(a, x), t.args); a)
+_collect_acc!(a, t::Pointwise)    = (foreach(x -> _collect_acc!(a, x), t.args); a)
 _accesses(t) = _collect_acc!(Tuple{Symbol, StaticShift}[], t)
 
 # --- materialize -----------------------------------------------------------
 
 """
-    materialize(term::AbstractTerm, pairs::NamedTuple) -> LazyArray
+    materialize(term::AbstractPointwise, pairs::NamedTuple) -> LazyArray
 
 Substitute the slots/symbolics named in `pairs` into `term` and lower it to a
 compiled `LazyArray`. The grid rank `N` is the substituted arrays' `ndims`
@@ -69,7 +69,7 @@ inward by the term's shift footprint (no implicit broadcasting). Shifts become
 index arithmetic in the generated kernel. Method on the same generic as
 [`StencilCore.materialize`](@ref) for `AbstractScalar`.
 """
-function materialize(term::AbstractTerm, pairs::NamedTuple = (;); size = nothing)
+function materialize(term::AbstractPointwise, pairs::NamedTuple = (;); size = nothing)
     t = simplify(term)
     acc = _accesses(t)
     if isempty(acc)
@@ -117,13 +117,13 @@ function _ndims_hint(t)
 end
 
 """
-    code_string(term::AbstractTerm; name = :kernel, ndims = <hint>) -> String
+    code_string(term::AbstractPointwise; name = :kernel, ndims = <hint>) -> String
 
 Render the per-cell kernel for `term` as Julia source — the same `Expr`
 `materialize` compiles, wrapped in a named function definition. `ndims`
 defaults to the largest shifted axis (≥ 1). For inspection / dumping to a file.
 """
-function code_string(term::AbstractTerm; name::Symbol = :kernel, ndims::Integer = _ndims_hint(term))
+function code_string(term::AbstractPointwise; name::Symbol = :kernel, ndims::Integer = _ndims_hint(term))
     t = simplify(term)
     idx = _idxvars(ndims)
     fnexpr = Expr(:function, Expr(:call, name, :args, idx...), _body_expr(t, idx))

@@ -9,7 +9,7 @@ import StencilCore: _interlace
 
 # The symbolic-term half of StencilCore's SoA→AoS coefficient combiner: stack
 # the per-offset coefficient terms into one SVector-valued term.
-_interlace(terms::NTuple{M, AbstractTerm}) where {M} = Term(SVector, terms)
+_interlace(terms::NTuple{M, AbstractPointwise}) where {M} = Pointwise(SVector, terms)
 
 # RowAccess → ColumnAccess. Offsets are invariant; each per-offset coefficient
 # `g_σ` (value at the row) becomes `Shifted(-σ, g_σ)` (the value re-read at the
@@ -47,7 +47,7 @@ function densify(sst::Stencil)
     (hi - lo + 1) == length(offs) && return sst            # already contiguous
     T = mapreduce(eltype, promote_type, gs)                # scalar coefficient type
     newshifts = StaticShift[]
-    newterms  = AbstractTerm[]
+    newterms  = AbstractPointwise[]
     for o in lo:hi
         push!(newshifts, SShift((SPair{D, o}(),)))         # SPair{D,0} normalizes to ô
         i = findfirst(==(o), offs)

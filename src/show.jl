@@ -7,7 +7,7 @@
 
 const _INFIX = (:+, :-, :*, :/, :\, :^)
 
-Base.show(io::IO, t::AbstractTerm) = _show(io, simplify(t))
+Base.show(io::IO, t::AbstractPointwise) = _show(io, simplify(t))
 
 _show(io::IO, ::Slot{S}) where {S} = print(io, S, "[]")
 _show(io::IO, ::Zero)              = print(io, '0')
@@ -25,7 +25,7 @@ function _show(io::IO, t::Shifted)
     print(io, ']')
 end
 
-function _show(io::IO, t::Term)
+function _show(io::IO, t::Pointwise)
     op, args = _callsym(t.fn), t.args
     if length(args) == 2 && op in _INFIX
         print(io, '(')
@@ -47,7 +47,7 @@ function _show(io::IO, t::Term)
 end
 
 # The "with respect to" functor displays as a call of its alias: `∂(f[])` /
-# `∂(τ)` depending on whether its target is a Slot or a Symbolic.
+# `∂(τ)` depending on whether its target is a Slot or a Var.
 function Base.show(io::IO, d::Diff)
     print(io, "∂(")
     show(io, d.term)

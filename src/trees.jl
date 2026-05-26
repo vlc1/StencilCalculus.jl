@@ -1,11 +1,11 @@
-# AbstractTrees interface for AbstractTerm — lets traversals / rewriters /
+# AbstractTrees interface for AbstractPointwise — lets traversals / rewriters /
 # pretty-printing dispatch on the generic tree API. Internal nodes expose
 # their operator / shift as the node value and their operands as children;
 # leaves are childless. The scalar-side analogue lives in
 # StencilCore/src/scalar_trees.jl.
 
-AbstractTrees.nodevalue(t::Term)    = t.fn
-AbstractTrees.children(t::Term)     = t.args
+AbstractTrees.nodevalue(t::Pointwise)    = t.fn
+AbstractTrees.children(t::Pointwise)     = t.args
 
 AbstractTrees.nodevalue(t::Shifted) = t.shift
 AbstractTrees.children(t::Shifted)  = (t.term,)
