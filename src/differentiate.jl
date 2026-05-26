@@ -10,6 +10,78 @@
 # are the type-level `Zero`/`One`, so the chain rule collapses under
 # `simplify`.
 
+# --- @pointwise_rule macro ---------------------------------------------------
+
+"""
+    @pointwise_rule f(x) = expr
+    @pointwise_rule f(x, y) = (expr1, expr2)
+
+Concise syntax for registering a symbolic derivative rule for a primitive `f`
+on the *pointwise* side, mirroring `StencilCore.@scalar_rule` (which targets
+[`AbstractScalar`](@ref) arguments).
+
+The single-argument form defines `∂f/∂x`. The two-argument form defines both
+partials `(∂f/∂x, ∂f/∂y)` — the tuple maps positionally to `Val{1}` and
+`Val{2}` respectively.
+
+Inside `expr`, the argument names `x`, `y` refer to the corresponding
+[`AbstractPointwise`](@ref) nodes (not numeric values). Use the pointwise
+arithmetic operators and `One{eltype(x)}()` / `Zero{eltype(x)}()` for
+structural identities, or wrap literals in `Fill(Constant(v))`.
+
+**Examples:**
+
+```julia
+@pointwise_rule sin(x)  = Pointwise(cos, (x,))
+@pointwise_rule exp(x)  = Pointwise(exp, (x,))
+@pointwise_rule log(x)  = Pointwise(/, (One{eltype(x)}(), x))
+@pointwise_rule *(x, y) = (y, x)
+```
+
+Each call expands to one or more `derivative(::typeof(f), ::Val{i}, ...) = ...`
+methods on `Vararg{AbstractPointwise}`. Existing hand-written methods (e.g. for
+`+`, `-`, `*`, `/`, `^`) are equivalent and interoperate with this macro.
+"""
+macro pointwise_rule(assignment)
+    # `@pointwise_rule f(args...) = expr` is parsed by Julia as a single
+    # assignment expression Expr(:(=), :(f(args...)), :expr).
+    assignment isa Expr && assignment.head === :(=) ||
+        throw(ArgumentError("@pointwise_rule: expected `f(args...) = expr`, got `$assignment`"))
+    call = assignment.args[1]
+    rhs  = assignment.args[2]
+    # Parse `f(args...)` from the LHS call expression.
+    call isa Expr && call.head === :call ||
+        throw(ArgumentError("@pointwise_rule: expected a function call on the left, got `$call`"))
+    f    = call.args[1]
+    args = call.args[2:end]
+    nargs = length(args)
+
+    # Unwrap the LineNumberNode-padded :block Julia adds around the RHS of `=`.
+    rhs = Meta.isexpr(rhs, :block) ?
+        last(filter(!Base.Fix2(isa, LineNumberNode), rhs.args)) : rhs
+
+    # RHS: either a single expr (unary) or a tuple (one element per argument).
+    exprs = if rhs isa Expr && rhs.head === :tuple
+        rhs.args
+    else
+        [rhs]
+    end
+    length(exprs) == nargs || throw(ArgumentError(
+        "@pointwise_rule: $nargs argument(s) in `$call` but $(length(exprs)) " *
+        "partial expression(s) on the right"))
+
+    # arg declarations for the method signature: each is `name::AbstractPointwise`.
+    sig = [:($(a)::AbstractPointwise) for a in args]
+
+    # Generate one `derivative` method per partial.
+    methods = map(enumerate(exprs)) do (i, expr)
+        quote
+            StencilCalculus.derivative(::typeof($(esc(f))), ::Val{$i}, $(esc.(sig)...)) = $(esc(expr))
+        end
+    end
+    Expr(:block, methods...)
+end
+
 # --- Derivative table (frule-shape: ∂f/∂(arg i); term-side, Vararg{AbstractPointwise}) ---
 
 _pe(args) = mapreduce(eltype, promote_type, args)   # promoted element type
@@ -30,8 +102,14 @@ derivative(::typeof(exp),  ::Val{1}, x::AbstractPointwise) = Pointwise(exp, (x,)
 derivative(::typeof(log),  ::Val{1}, x::AbstractPointwise) = Pointwise(/, (One{_pe((x,))}(), x))
 derivative(::typeof(sqrt), ::Val{1}, x::AbstractPointwise) =
     Pointwise(/, (One{_pe((x,))}(), Pointwise(*, (Fill(Constant(2)), Pointwise(sqrt, (x,))))))
+derivative(::typeof(tan),  ::Val{1}, x::AbstractPointwise) =
+    # ∂tan(x)/∂x = 1 + tan²(x); avoids introducing sec.
+    One{_pe((x,))}() + Pointwise(*, (Pointwise(tan, (x,)), Pointwise(tan, (x,))))
+derivative(::typeof(abs),  ::Val{1}, x::AbstractPointwise) =
+    # ∂|x|/∂x = sign(x); undefined at x = 0 (caller's responsibility).
+    Pointwise(sign, (x,))
 derivative(f, ::Val, args::Vararg{AbstractPointwise}) =
-    throw(ArgumentError("no term derivative rule for $(f)"))
+    throw(ArgumentError("no pointwise derivative rule for $(f)"))
 
 # --- Per-offset contribution collection (Slot path) ------------------------
 
@@ -60,7 +138,15 @@ function _diff(t::Pointwise, v::Slot)
         isempty(sub) && continue
         dfn = derivative(t.fn, Val(i), t.args...)
         for (sh, partial) in sub
-            push!(out, sh => simplify(Pointwise(*, (dfn, partial))))
+            # For *, arg 1 should be left-multiplied by `partial` (non-commutative
+            # correctness for SVector/SMatrix coefficient terms — mirrors Q3=(A) in
+            # StencilCore/differentiate.jl).
+            term = if t.fn === (*) && i == 1
+                simplify(Pointwise(*, (partial, dfn)))
+            else
+                simplify(Pointwise(*, (dfn, partial)))
+            end
+            push!(out, sh => term)
         end
     end
     return out
@@ -84,7 +170,11 @@ function _diff_scalar(t::Pointwise, v::Var)
         sub = _diff_scalar(arg, v)
         sub === nothing && continue
         dfn     = derivative(t.fn, Val(i), t.args...)
-        contrib = simplify(Pointwise(*, (dfn, sub)))
+        contrib = if t.fn === (*) && i == 1
+            simplify(Pointwise(*, (sub, dfn)))
+        else
+            simplify(Pointwise(*, (dfn, sub)))
+        end
         out = (out === nothing) ? contrib : simplify(Pointwise(+, (out, contrib)))
     end
     return out

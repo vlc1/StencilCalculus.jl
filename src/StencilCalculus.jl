@@ -37,6 +37,7 @@ export FwdDiff, BwdDiff, FwdSum, BwdSum, δ₊, δ₋, σ₊, σ₋
 # Rewriting + differentiation (shared generic with StencilCore — same function,
 # disjoint methods on AbstractPointwise vs AbstractScalar).
 export simplify, differentiate, derivative, Diff, ∂
+export POINTWISE_DEFAULT_RULES, @pointwise_rule
 
 # Materialization / codegen + the assembly bridge.
 export materialize, code_string, LazyArray, build_stencil, densify

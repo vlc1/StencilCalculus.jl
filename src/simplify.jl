@@ -58,15 +58,21 @@ function rule_identity(t::Pointwise)
     elseif f === (/) && length(a) == 2
         _is_term_one(a[2])  && return a[1]
         _is_term_zero(a[1]) && return Zero{eltype(t)}()
-    elseif f === (-) && length(a) == 1                       # double negation
-        inner = a[1]
-        inner isa Pointwise && inner.fn === (-) && length(inner.args) == 1 &&
-            return inner.args[1]
     end
     return nothing
 end
 
-# 5. Scalar precedence: a `Pointwise` whose args are *all* `Fill` is the broadcast
+# 5. Double negation: -(-x) → x.
+rule_double_negation(::AbstractPointwise) = nothing
+function rule_double_negation(t::Pointwise)
+    t.fn === (-) && length(t.args) == 1 || return nothing
+    inner = t.args[1]
+    inner isa Pointwise && inner.fn === (-) && length(inner.args) == 1 &&
+        return inner.args[1]
+    return nothing
+end
+
+# 6. Scalar precedence: a `Pointwise` whose args are *all* `Fill` is the broadcast
 #    of a scalar-tree expression. Collapse it into one `Fill(Scalar(fn, vals…))`,
 #    simplified in scalar-land. Operationally this is the dual of `asterm`:
 #    Fills cluster, scalars regroup. The simplified inner scalar may reduce
@@ -77,11 +83,44 @@ function rule_fill_collapse(t::Pointwise)
     Fill(simplify(Scalar(t.fn, map(a -> a.val, t.args))))
 end
 
-const DEFAULT_RULES = (
+"""
+    POINTWISE_DEFAULT_RULES
+
+Default simplification rule set used by [`simplify`](@ref) on
+`AbstractPointwise` terms. Each element is a callable with signature:
+
+    rule(t::AbstractPointwise) -> Union{AbstractPointwise, Nothing}
+
+A rule returns a replacement node when applicable, or `nothing` to pass to
+the next rule. Rules are tried **in order**; the first non-`nothing` result
+wins. The post-walk in `_rebuild` guarantees that children are already in
+normal form when a rule fires on their parent.
+
+Built-in rules (in application order):
+
+| Rule                    | Action                                                    |
+|:------------------------|:----------------------------------------------------------|
+| `rule_shift_compose`    | `Shifted(s₁, Shifted(s₂, t)) → Shifted(s₁+s₂, t)`       |
+| `rule_shift_pushdown`   | `Shifted(s, f(a…)) → f(Shifted(s,a)…)`                   |
+| `rule_shift_const`      | `Shifted(s, Fill/Zero/One) → Fill/Zero/One`               |
+| `rule_identity`         | `0+x→x`, `x+0→x`, `0*x→0`, `1*x→x`, `x/1→x`, `0/x→0`   |
+| `rule_double_negation`  | `-(-x) → x`                                              |
+| `rule_fill_collapse`    | All-`Fill` `Pointwise` → `Fill(Scalar(fn,…))` (scalar-land) |
+
+To extend, compose a new tuple that includes the new rule(s) and pass it as
+the `rules` keyword argument to `simplify`:
+
+```julia
+my_rules = (my_rule, StencilCalculus.POINTWISE_DEFAULT_RULES...)
+simplify(expr; rules = my_rules)
+```
+"""
+const POINTWISE_DEFAULT_RULES = (
     rule_shift_compose,
     rule_shift_pushdown,
     rule_shift_const,
     rule_identity,
+    rule_double_negation,
     rule_fill_collapse,
 )
 
@@ -117,15 +156,16 @@ end
 _rewrite(t::AbstractPointwise, rules) = _apply(_rebuild(t, rules), rules)
 
 """
-    simplify(t::AbstractPointwise, rules = DEFAULT_RULES; maxsteps = 64)
+    simplify(t::AbstractPointwise, rules = POINTWISE_DEFAULT_RULES; maxsteps = 64)
 
 Rewrite `t` to a normal form by post-walking and applying `rules` to a fixed
 point. The default rules push shifts down to leaves (merging nested shifts),
-apply additive/multiplicative identities, and collapse all-Fill `Pointwise`s into
-a single `Fill(Scalar(…))` (the scalar-precedence rule). Method on the same
-generic as [`StencilCore.simplify`](@ref) for `AbstractScalar`.
+apply additive/multiplicative identities, collapse double negations, and
+collapse all-Fill `Pointwise`s into a single `Fill(Scalar(…))` (the scalar-
+precedence rule). Method on the same generic as [`StencilCore.simplify`](@ref)
+for `AbstractScalar`.
 """
-function simplify(t::AbstractPointwise, rules = DEFAULT_RULES; maxsteps::Int = 64)
+function simplify(t::AbstractPointwise, rules = POINTWISE_DEFAULT_RULES; maxsteps::Int = 64)
     for _ in 1:maxsteps
         t′ = _rewrite(t, rules)
         t′ === t && return t

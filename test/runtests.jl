@@ -217,6 +217,15 @@ using StencilAssembly: build
         # A nested mix folds (in scalar-land), collapses to a Fill, then leaves
         # the outer Pointwise(*) intact (no further annihilation since 5 ≠ 0/1).
         @test simplify((f + Z) * (Fill(Constant(2.0)) + Fill(Constant(3.0)))) == f * 5.0
+
+        # Double-negation rule (now a named rule, separately testable).
+        @test simplify(-(-f)) === f
+        @test simplify(-(-f) + g) == f + g
+
+        # POINTWISE_DEFAULT_RULES is exported and composable.
+        @test POINTWISE_DEFAULT_RULES isa Tuple
+        my_rules = (POINTWISE_DEFAULT_RULES...,)
+        @test simplify(-(-f), my_rules) === f
     end
 
     @testset "differentiate" begin
@@ -286,6 +295,33 @@ using StencilAssembly: build
             @var td
             @test ∂(td)(td * fd) === fd
             @test ∂(fd)(td * fd) isa Stencil
+        end
+
+        @testset "tan and abs derivative rules" begin
+            # Both tan and abs are in the operator overload list but previously
+            # had no derivative rule on the pointwise side — differentiate would throw.
+            @test differentiate(tan(f), f) isa Stencil
+            @test differentiate(abs(f), f) isa Stencil
+            # ∂tan(f)/∂f = 1 + tan²(f) — check structure
+            d_tan = only(differentiate(tan(f), f).terms)
+            @test d_tan isa Pointwise   # a non-trivial expression
+            # ∂|f|/∂f = sign(f)
+            d_abs = only(differentiate(abs(f), f).terms)
+            @test d_abs isa Pointwise{typeof(sign)}
+        end
+
+        @testset "@pointwise_rule macro" begin
+            # Define a new primitive `myop` and its derivative via the macro.
+            myop(x::Float64) = x^3
+            @pointwise_rule myop(x) = Pointwise(*, (Fill(Constant(3.0)), Pointwise(^, (x, Fill(Constant(2.0))))))
+            s = Slot{:s, Float64}()
+            d = differentiate(Pointwise(myop, (s,)), s)
+            @test d isa Stencil
+            coef = only(d.terms)
+            @test coef isa Pointwise   # 3 * s^2
+            # The macro errors with the wrong arity (2 LHS args, 3 RHS partials).
+            # The ArgumentError is wrapped in a LoadError by @eval.
+            @test_throws "2 argument(s)" @eval @pointwise_rule myop2(x, y) = (y, x, y)
         end
     end
 
