@@ -32,8 +32,8 @@ julia --project=.
 
 **Core pipeline** (from README):
 ```
-@slot f, @scalar ψ          ← Define named placeholders (DSL sugar)
-expr = ψ * δ₊{1}(f)         ← Build symbolic expression tree (operator overloads)
+@slot f, @var ψ             ← Define named placeholders (DSL sugar)
+expr = ψ .* δ₊{1}(f)        ← Build symbolic expression tree (broadcast syntax)
 simplify(expr)              ← Reduce via dispatch-driven rules (shifts, identities, const folding)
 materialize(expr, data)     ← Compile to LazyArray + code_string (codegen via RuntimeGeneratedFunctions)
 differentiate(expr, f)      ← Symbolic differentiation → Stencil{RowAccess}
@@ -41,8 +41,8 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 ```
 
 **Main modules** (each 50–150 lines):
-- **pointwise.jl** — `Slot{S,T}`, `Zero{T}`, `One{T}`, `Pointwise`, `Shifted`, `Fill`; constructor macro `@slot`
-- **operators.jl** — Component-wise operator overloads, `SVector` interception, indexing sugar (`f[-2ê₁]`), DSL functors (`δ₊`, `δ₋`, `σ₊`, `σ₋`)
+- **pointwise.jl** — `Slot{S,T}`, `One{T}`, `Pointwise`, `Shifted`, `Fill`, and the `Zero{T} = Fill{Null{T}}` alias; constructor macro `@slot`
+- **operators.jl** — Broadcast plumbing (`PointwiseStyle` / `ScalarStyle`), `SVector` interception, indexing sugar (`f[-2ê₁]`), DSL functors (`δ₊`, `δ₋`, `σ₊`, `σ₋`)
 - **simplify.jl** — Hand-rolled rule rewriter (`POINTWISE_DEFAULT_RULES`: shift composition/pushdown, identity/annihilator collapse, double-negation, scalar precedence); post-walk to fixed point
 - **differentiate.jl** — Symbolic differentiation table (function-keyed rules, extensible via `@pointwise_rule`); row-anchored Jacobian coefficients
 - **materialize.jl** — Codegen to `Expr` → compiled kernel via `RuntimeGeneratedFunctions`; `LazyArray` wrapper
@@ -56,7 +56,8 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 - **`T` must be concrete**: All `AbstractPointwise{T}` subtypes require concrete element types (e.g., `Float64`, not `Number`). Enforced by `_assert_concrete()` at construction; throws `ArgumentError` if violated.
 - **Element type inference at construction**: `T = Base.promote_op(fn, eltype.(args)...)` for `Pointwise` nodes. `SVector{2, Float64}` from `SVector(a::Slot{_, Float64}, b::Slot{_, Float64})`.
 - **Defaults to `Float64`**: `Slot{:f}()` ≡ `Slot{:f, Float64}()`.
-- **Two CAS layers**: Scalar-land uses `Var{S,T}` / `Constant` / `Null{T}` / `Unity{T}` / `Scalar(fn, args)` (StencilCore). Pointwise-land uses `Slot{S,T}` / `Fill` / `Zero{T}` / `One{T}` / `Pointwise(fn, args)` (StencilCalculus). The `Fill` bridge wraps a scalar or literal into a spatially-invariant `AbstractPointwise`.
+- **Two CAS layers**: Scalar-land uses `Var{S,T}` / `Constant` / `Null{T}` / `Unity{T}` / `Scalar(fn, args)` (StencilCore). Pointwise-land uses `Slot{S,T}` / `Fill` / `Zero{T}` / `One{T}` / `Pointwise(fn, args)` (StencilCalculus). The `Fill` bridge wraps a scalar or literal into a spatially-invariant `AbstractPointwise`. `Zero` is a type alias: `const Zero{T} = Fill{Null{T}}` — it shares `Null`'s bool-shape discipline, and `eltype(Zero(Float64)) === Bool` (the Float64 is the *input* the bool-shape ctor consumes; promotion in surrounding arithmetic recovers it).
+- **Construction syntax — broadcast vs scalar**: dotted operators (`f .* g`, `sin.(f)`) build `Pointwise` nodes; un-dotted operators (`τ * ψ`, `sin(τ)`) build `Scalar` nodes in scalar-land. Un-dotted operators on `AbstractPointwise` raise `MethodError` (no overload); broadcast with no `AbstractPointwise` operand raises `ArgumentError` (the `ScalarStyle` materializer rejects it). The `SVector(_, _)` constructor, `f[ê₁]` shift sugar, and DSL functors (`δ₊{D}(_)`, `∂(_)(_)`) are not Base operators and are unchanged.
 
 ### Dispatch-Driven Simplification
 - **Rules are functions**: `(::AbstractPointwise) -> Union{Nothing, AbstractPointwise}`. Return `nothing` if inapplicable; return rewritten term otherwise.
@@ -64,9 +65,9 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 - **Six default rules** (in `simplify.jl`, exported as `POINTWISE_DEFAULT_RULES`):
   1. Shift composition: `Shifted(s₁, Shifted(s₂, t)) → Shifted(s₁ + s₂, t)`
   2. Shift pushdown: `Shifted(s, f(a…)) → f(Shifted(s, a)…)`
-  3. Shift over constants: `Shifted(s, Fill|Zero|One) → Fill|Zero|One`
-  4. Identity/annihilator: `Zero + x → x`, `x * Zero → Zero`, `One * x → x` (dispatch on types, never `iszero`/`isone` probes)
-  5. Double negation: `-(-x) → x`
+  3. Shift over constants: `Shifted(s, Fill|One) → Fill|One` (Zero is a `Fill{<:Null}`)
+  4. Identity/annihilator: `Zero .+ x → x`, `x .* Zero → Zero`, `One .* x → x` (dispatch on types, never `iszero`/`isone` probes)
+  5. Double negation: `.-(.-x) → x`
   6. Scalar precedence: all-`Fill` `Pointwise` → `Fill(Scalar(fn, …))`
 
 ### Shifts are Type-Level Structure
@@ -86,7 +87,7 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 - **Inspectable source**: `code_string(expr; name=:kernel)` dumps the same `Expr` as formatted Julia source.
 
 ### Exports & Public API
-- **Concrete pointwise terms**: `Slot`, `Zero`, `One`, `Pointwise`, `Shifted`, `Fill`, `AbstractPointwise` (from StencilCore)
+- **Concrete pointwise terms**: `Slot`, `One`, `Pointwise`, `Shifted`, `Fill`, `AbstractPointwise` (from StencilCore); `Zero` is exported as the alias `Fill{Null{T}}`
 - **Re-exported scalar terms** (from StencilCore): `AbstractScalar`, `Var`, `Constant`, `Null`, `Unity`, `Scalar`
 - **Macros**: `@slot`, `@var` (re-exported from StencilCore), `@pointwise_rule`
 - **DSL operators**: `FwdDiff`, `BwdDiff`, `FwdSum`, `BwdSum`, `δ₊`, `δ₋`, `σ₊`, `σ₋`

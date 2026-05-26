@@ -16,7 +16,7 @@ other (see also [StencilCore](https://vlc1.github.io/StencilCore.jl/dev/)):
 | named substitution leaf | `Symbolic{S, T}`               | `Slot{S, T}`                |
 | literal carrier         | `Const{T}` with `val::T`       | — (via `Fill(Const(…))`)    |
 | interior tree node      | `Scalar{F, A, T}`              | `Term{F, A, T}`             |
-| additive identity       | `Null{T}`                      | `Zero{T}`                   |
+| additive identity       | `Null{T}`                      | `Zero{T} = Fill{Null{T}}`    |
 | multiplicative identity | `Unity{T}`                     | `One{T}`                    |
 
 A scalar has no spatial extent (one materialized value); a term is array-like
@@ -63,7 +63,7 @@ mutated). The conventions:
 |----------------------------|-----------------------|
 | `Slot{:f}()`               | `f[]`                 |
 | `f[ê₁]` (a shift)          | `f[ê₁]`               |
-| `Zero{T}()`                | `0`                   |
+| `Zero(T)`                  | `0`                   |
 | `One{T}()`                 | `1`                   |
 | `Fill(Const(2.0))`         | `2.0`                 |
 | `Fill(Symbolic{:τ,T}())`   | `τ`                   |
@@ -73,8 +73,8 @@ mutated). The conventions:
 ```julia
 @slot f
 @symbolic τ
-repr(τ * δ₊{1}(f))           # "(τ * (f[ê₁] - f[]))"
-repr(f - Zero{Float64}())    # "f[]"  — display is of the simplified form
+repr(τ .* δ₊{1}(f))          # "(τ * (f[ê₁] - f[]))"
+repr(f .- Zero(Float64))     # "f[]"  — display is of the simplified form
 ```
 
 A `Fill` prints as its wrapped value via the scalar-side `show`, without
@@ -84,7 +84,7 @@ reserved for spatially-indexed leaves (`Slot` and `Shifted`).
 !!! note "Why the glyphs `0`/`1`"
     `Zero`/`One` (and their scalar-side analogues `Null`/`Unity`) are
     *symbolic* identities — structure, not data — so they print as the bare
-    glyphs `0`/`1` regardless of `T`. `Zero{Float64}` shows `0`, not `0.0`.
+    glyphs `0`/`1` regardless of `T`. `Zero(Float64)` shows `0`, not `0.0`.
     The display stays type-agnostic and no value is ever constructed, which
     keeps it faithful to their role as the structural neutrals that drive
     `simplify` and make the chain rule collapse.
@@ -104,7 +104,7 @@ two methods on the same generic, dispatched by the kind of the variable:
   the way back into term-land, producing a single broadcast coefficient — an
   `AbstractTerm`, not a `Stencil`.
 
-**Is the derivative of `One{T}()` equal to `Zero{T}()`?** Effectively yes,
+**Is the derivative of `One{T}()` equal to `Zero(T)`?** Effectively yes,
 but no literal `Zero` object is produced for a Slot-independent leaf.
 `One`, `Zero`, `Fill` and a `Shifted` of an unrelated `Slot` all contribute
 the **empty** set of offset/coefficient pairs to the Slot derivative — which
@@ -137,8 +137,8 @@ The variable's *kind* decides the result type:
 ```julia
 @symbolic τ Float64
 @slot f Float64
-∂(τ)(τ * f)        # === f          (a term)
-∂(f)(τ * f)        # a Stencil      (offset ô, coefficient Fill(τ))
+∂(τ)(τ .* f)       # === f          (a term)
+∂(f)(τ .* f)       # a Stencil      (offset ô, coefficient Fill(τ))
 ```
 
 A `Slot` and a `Symbolic` that happen to share a symbol do **not** collide:
@@ -155,8 +155,8 @@ cell-by-cell. `simplify` therefore collapses it into a single
 StencilCore's scalar `simplify`:
 
 ```julia
-simplify(Fill(Const(2.0)) + Fill(Const(3.0)))            # Fill(Const(5.0))
-simplify(Fill(Const(2.0)) * Fill(Symbolic{:τ,Float64}())) ==
+simplify(Fill(Const(2.0)) .+ Fill(Const(3.0)))           # Fill(Const(5.0))
+simplify(Fill(Const(2.0)) .* Fill(Symbolic{:τ,Float64}())) ==
     Fill(Scalar(*, (Const(2.0), Symbolic{:τ,Float64}())))
 ```
 
@@ -164,7 +164,7 @@ The rule only fires when *every* argument is a `Fill` — a `Term(*, (Fill(τ),
 f))` (with a real Slot `f`) stays a `Term`, because there is genuine spatial
 structure to broadcast over.
 
-The corresponding identity check (`f * Fill(Const(0)) → Zero`) uses a small
+The corresponding identity check (`f .* Fill(Const(0)) → Zero`) uses a small
 helper, `_is_term_zero` / `_is_term_one`, that is **type-dispatched** on
 `Zero`/`One` and on `Fill{<:Null}` / `Fill{<:Unity}`, and **value-dispatched**
 on a literal `Fill{<:Const}` (via `iszero`/`isone` on the wrapped value). A

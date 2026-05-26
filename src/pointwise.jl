@@ -20,15 +20,12 @@ end
 Slot{S}() where {S} = Slot{S, Float64}()
 
 """
-    Zero{T}() / One{T}()
+    One{T}()
 
-Type-level additive / multiplicative identities (structure, not data): they
-let differentiation collapse and `simplify` rewrite by dispatch. Lower to
-`zero(T)` / `one(T)`. Scalar-side analogues: [`Null`](@ref) / [`Unity`](@ref).
+Type-level multiplicative identity (structure, not data): lets differentiation
+collapse and `simplify` rewrite by dispatch. Lowers to `one(T)`. Scalar-side
+analogue: [`Unity`](@ref). See also [`Zero`](@ref) for the additive identity.
 """
-struct Zero{T} <: AbstractPointwise{T}
-    Zero{T}() where {T} = (_assert_concrete(:Zero, T); new{T}())
-end
 struct One{T} <: AbstractPointwise{T}
     One{T}() where {T} = (_assert_concrete(:One, T); new{T}())
 end
@@ -97,6 +94,26 @@ Fill(v) = Fill{typeof(v)}(v)
 # Specialize `eltype` recursively for Fills wrapping an AbstractScalar so that
 # `Base.promote_op` against the scalar's underlying numeric type works.
 Base.eltype(::Type{Fill{T}}) where {T<:AbstractScalar} = eltype(T)
+
+"""
+    Zero{T} = Fill{Null{T}}
+    Zero(T::Type) / Zero(x)
+
+Type-level additive identity for [`AbstractPointwise`](@ref), defined as the
+`Fill` of a scalar-side [`Null`](@ref). The parameter `T` is bool-shaped
+(`Bool` or `AbstractArray{Bool}`), mirroring `Null`'s discipline; the outer
+constructors map any concrete value-space type to its bool shape, so
+`Zero(Float64) === Fill(Null{Bool}())` and `eltype(Zero(Float64)) === Float64`
+via the `Fill{<:AbstractScalar}` eltype specialization above.
+
+Materializes to a broadcast of `zero(T)` (Bool false, etc.) — promotion in
+surrounding arithmetic recovers the cell type, exactly as for [`Null`](@ref)
+in scalar-land.
+"""
+const Zero{T} = Fill{Null{T}}
+
+Zero(T::Type)       = Fill(Null(T))
+Zero(::T) where {T} = Fill(Null(T))
 
 # Promote a numeric literal / bare scalar to a term: literals canonicalise in
 # scalar-land first (`Fill(Const(x))`); bare scalars wrap (`Fill(s)`); terms

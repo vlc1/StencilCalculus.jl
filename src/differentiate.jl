@@ -26,7 +26,7 @@ partials `(∂f/∂x, ∂f/∂y)` — the tuple maps positionally to `Val{1}` an
 
 Inside `expr`, the argument names `x`, `y` refer to the corresponding
 [`AbstractPointwise`](@ref) nodes (not numeric values). Use the pointwise
-arithmetic operators and `One{eltype(x)}()` / `Zero{eltype(x)}()` for
+arithmetic operators and `One{eltype(x)}()` / `Zero(eltype(x))` for
 structural identities, or wrap literals in `Fill(Constant(v))`.
 
 **Examples:**
@@ -104,7 +104,8 @@ derivative(::typeof(sqrt), ::Val{1}, x::AbstractPointwise) =
     Pointwise(/, (One{_pe((x,))}(), Pointwise(*, (Fill(Constant(2)), Pointwise(sqrt, (x,))))))
 derivative(::typeof(tan),  ::Val{1}, x::AbstractPointwise) =
     # ∂tan(x)/∂x = 1 + tan²(x); avoids introducing sec.
-    One{_pe((x,))}() + Pointwise(*, (Pointwise(tan, (x,)), Pointwise(tan, (x,))))
+    Pointwise(+, (One{_pe((x,))}(),
+                  Pointwise(*, (Pointwise(tan, (x,)), Pointwise(tan, (x,))))))
 derivative(::typeof(abs),  ::Val{1}, x::AbstractPointwise) =
     # ∂|x|/∂x = sign(x); undefined at x = 0 (caller's responsibility).
     Pointwise(sign, (x,))
@@ -117,8 +118,9 @@ const _Contrib = Pair{StaticShift, AbstractPointwise}
 
 _slotsym(::Slot{S}) where {S} = S
 
-# Position-independent leaves (Fill, Zero, One) have no Slot dependence.
-_diff(::Union{Fill, Zero, One}, ::Slot) = _Contrib[]
+# Position-independent leaves (Fill, One) have no Slot dependence. `Zero` is
+# subsumed by `Fill` (it is `Fill{<:Null}`).
+_diff(::Union{Fill, One}, ::Slot) = _Contrib[]
 
 _diff(::Slot{S2, T}, ::Slot{S}) where {S2, T, S} =
     S2 === S ? _Contrib[ô => One{T}()] : _Contrib[]
@@ -157,7 +159,7 @@ end
 # collapses to a per-cell broadcast coefficient. Walking strategy: like the
 # Slot path, but without spatial offsets — accumulate one AbstractPointwise.
 
-_diff_scalar(::Union{Slot, Shifted, Zero, One}, ::Var) = nothing
+_diff_scalar(::Union{Slot, Shifted, One}, ::Var) = nothing
 function _diff_scalar(f::Fill{<:AbstractScalar}, v::Var)
     d = differentiate(f.val, v)
     d isa Null ? nothing : Fill(d)

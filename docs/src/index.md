@@ -48,9 +48,9 @@ These are sibling algebras: a `Term.args` tuple is always
 into term-land via **[`Fill`](@ref)** — a `Fill{T} <: AbstractTerm{T}` is the
 spatially-invariant broadcast of one value (literal or `AbstractScalar`).
 `eltype(Fill{<:AbstractScalar})` unwraps recursively so e.g.
-`Slot{:f,Float64}() + Fill(τ)` promotes to `Float64`. Operators on the
-boundary do the lifting for you: `2 * f`, `τ * f`, `α + f` all build
-`Term`s with `Fill(…)` leaves.
+`Slot{:f,Float64}() .+ Fill(τ)` promotes to `Float64`. Broadcast on the
+boundary does the lifting for you: `2 .* f`, `τ .* f`, `α .+ f` all build
+`Pointwise`s with `Fill(…)` leaves.
 
 ## How it fits together
 
@@ -88,7 +88,7 @@ using StaticArrays
 @slot ψ Float64
 
 # Upwind advection:  out[i] = ψ[i] * (f[i+1] - f[i])
-expr = ψ * δ₊{1}(f)
+expr = ψ .* δ₊{1}(f)
 
 print(code_string(expr; name = :advect))
 #   function advect(args, i)

@@ -14,7 +14,6 @@
 # symbolic scalar (e.g. `Fill(Var{S})`, `Fill(Scalar(…))`) is *never*
 # treated as an identity (the symbolic value may take any runtime value).
 
-_is_term_zero(::Zero)                = true
 _is_term_zero(::Fill{<:Null})        = true
 _is_term_zero(f::Fill{<:Constant})   = iszero(f.val.val)
 _is_term_zero(::AbstractPointwise)        = false
@@ -38,7 +37,7 @@ rule_shift_pushdown(t::Shifted{Sh, T, U}) where {Sh, T, U<:Pointwise} =
 
 # 3. Shift over a position-independent leaf (Fill / Zero / One) is a no-op.
 rule_shift_const(::AbstractPointwise) = nothing
-rule_shift_const(t::Shifted{Sh, T, U}) where {Sh, T, U<:Union{Fill, Zero, One}} =
+rule_shift_const(t::Shifted{Sh, T, U}) where {Sh, T, U<:Union{Fill, One}} =
     t.term
 
 # 4. Identity / annihilator.
@@ -52,12 +51,12 @@ function rule_identity(t::Pointwise)
         _is_term_zero(a[2]) && return a[1]
         _is_term_zero(a[1]) && return Pointwise(-, (a[2],))      # 0 - b = -b
     elseif f === (*) && length(a) == 2
-        (_is_term_zero(a[1]) || _is_term_zero(a[2])) && return Zero{eltype(t)}()
+        (_is_term_zero(a[1]) || _is_term_zero(a[2])) && return Zero(eltype(t))
         _is_term_one(a[1]) && return a[2]
         _is_term_one(a[2]) && return a[1]
     elseif f === (/) && length(a) == 2
         _is_term_one(a[2])  && return a[1]
-        _is_term_zero(a[1]) && return Zero{eltype(t)}()
+        _is_term_zero(a[1]) && return Zero(eltype(t))
     end
     return nothing
 end
@@ -102,7 +101,7 @@ Built-in rules (in application order):
 |:------------------------|:----------------------------------------------------------|
 | `rule_shift_compose`    | `Shifted(s₁, Shifted(s₂, t)) → Shifted(s₁+s₂, t)`       |
 | `rule_shift_pushdown`   | `Shifted(s, f(a…)) → f(Shifted(s,a)…)`                   |
-| `rule_shift_const`      | `Shifted(s, Fill/Zero/One) → Fill/Zero/One`               |
+| `rule_shift_const`      | `Shifted(s, Fill/One) → Fill/One` (Zero is a `Fill{<:Null}`) |
 | `rule_identity`         | `0+x→x`, `x+0→x`, `0*x→0`, `1*x→x`, `x/1→x`, `0/x→0`   |
 | `rule_double_negation`  | `-(-x) → x`                                              |
 | `rule_fill_collapse`    | All-`Fill` `Pointwise` → `Fill(Scalar(fn,…))` (scalar-land) |

@@ -51,7 +51,7 @@ function densify(sst::Stencil)
     for o in lo:hi
         push!(newshifts, SShift((SPair{D, o}(),)))         # SPair{D,0} normalizes to ô
         i = findfirst(==(o), offs)
-        push!(newterms, i === nothing ? Zero{T}() : gs[i])
+        push!(newterms, i === nothing ? Zero(T) : gs[i])
     end
     Stencil(typeof(AccessStyle(sst)), (newshifts...,), (newterms...,))
 end

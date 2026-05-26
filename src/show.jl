@@ -1,16 +1,14 @@
 # Pretty-printing of grid expressions in component form. `show` always renders
 # the *normal form* (`simplify`'d) of a term; it never mutates the term itself.
-# Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `Zero`/`One` →
-# `0`/`1` glyphs (type-agnostic, parallel to the scalar-side `Null`/`Unity`),
-# `Fill` → its wrapped value via the scalar-side show (e.g. `Fill(Const(2.0))`
-# prints as `2.0`, `Fill(τ)` prints as `τ`).
+# Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `One` → `1` (type-
+# agnostic), `Fill` → its wrapped value via the scalar-side show. The [`Zero`](@ref)
+# alias is a `Fill{<:Null}`, so it renders as `0` via Null's scalar-side glyph.
 
 const _INFIX = (:+, :-, :*, :/, :\, :^)
 
 Base.show(io::IO, t::AbstractPointwise) = _show(io, simplify(t))
 
 _show(io::IO, ::Slot{S}) where {S} = print(io, S, "[]")
-_show(io::IO, ::Zero)              = print(io, '0')
 _show(io::IO, ::One)               = print(io, '1')
 # A Fill is rendered as its wrapped value: AbstractScalar uses Core's scalar
 # show; a literal uses Base.show directly. Either way, no `[]` (Fill has no

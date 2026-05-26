@@ -34,7 +34,6 @@ _idxvars(N::Integer) = N <= 3 ? [:i, :j, :k][1:N] : [Symbol(:i, d) for d in 1:N]
 
 _slotref(S, idxs) = Expr(:ref, Expr(:., :args, QuoteNode(S)), idxs...)   # args.S[idxs...]
 _body_expr(::Slot{S}, idx) where {S} = _slotref(S, idx)
-_body_expr(::Zero{T}, idx)  where {T} = Expr(:call, :zero, T)
 _body_expr(::One{T}, idx)   where {T} = Expr(:call, :one, T)
 # A Fill broadcasts a scalar/literal — no `idx`-dependence. For an
 # `AbstractScalar` payload, reuse StencilCore's scalar codegen.
@@ -52,7 +51,7 @@ _shifted_ix(v, o) = o == 0 ? v : Expr(:call, :+, v, o)
 
 # --- leaf / access collection ----------------------------------------------
 _collect_acc!(a, s::Slot{S}) where {S} = (push!(a, (S, ô)); a)
-_collect_acc!(a, ::Union{Fill, Zero, One}) = a
+_collect_acc!(a, ::Union{Fill, One}) = a
 _collect_acc!(a, t::Shifted) = (push!(a, (_slotsym(t.term), t.shift)); a)
 _collect_acc!(a, t::Pointwise)    = (foreach(x -> _collect_acc!(a, x), t.args); a)
 _accesses(t) = _collect_acc!(Tuple{Symbol, StaticShift}[], t)

@@ -13,11 +13,11 @@ AbstractTrees.children(t::Shifted)  = (t.term,)
 AbstractTrees.nodevalue(::Slot{S}) where {S} = S
 AbstractTrees.children(::Slot)               = ()
 
-AbstractTrees.nodevalue(::Zero{T}) where {T} = zero(T)
-AbstractTrees.children(::Zero)               = ()
-
 AbstractTrees.nodevalue(::One{T}) where {T} = one(T)
 AbstractTrees.children(::One)               = ()
 
+# `Fill` covers both literals and the scalar-side identities (`Null`/`Unity`),
+# the latter of which is what the [`Zero`](@ref) alias wraps. The wrapped value
+# is the node value; the Fill itself is a leaf.
 AbstractTrees.nodevalue(f::Fill) = f.val
 AbstractTrees.children(::Fill)   = ()

@@ -16,9 +16,9 @@ shifts it by a lattice offset:
 using StencilCalculus
 
 @slot f Float64
-g = f[-2ê₁] - 4f[-ê₁] + 3f[]      # f[i-2] - 4 f[i-1] + 3 f[i]
+g = f[-2ê₁] .- 4 .* f[-ê₁] .+ 3 .* f[]      # f[i-2] - 4 f[i-1] + 3 f[i]
 @slot ψ Float64
-adv = ψ * δ₊{1}(f)                # ψ[i] * (f[i+1] - f[i])
+adv = ψ .* δ₊{1}(f)                # ψ[i] * (f[i+1] - f[i])
 ```
 
 The `@slot` / `@symbolic` / `@const` macros bind a variable to a leaf named
@@ -33,11 +33,15 @@ A bare `Symbolic` or `Const` is an [`AbstractScalar`](@ref) — *not* an
 
 ```julia
 @symbolic τ Float64                   # τ isa Symbolic <: AbstractScalar
-τ * f                                 # Term(*, (Fill(τ), f)) — Fill wraps τ
+τ .* f                                # Term(*, (Fill(τ), f)) — Fill wraps τ
 @const α 2
-α + f                                 # Term(+, (Fill(α), f))
-2 * f                                 # Term(*, (Fill(Const(2)), f))
+α .+ f                                # Term(+, (Fill(α), f))
+2 .* f                                # Term(*, (Fill(Const(2)), f))
 ```
+
+Un-dotted operators (`*`, `+`, `sin`) on `AbstractPointwise` raise `MethodError`
+— they are reserved for scalar-land. Broadcast with no `AbstractPointwise`
+operand (e.g. `τ .* ψ` with both scalars) raises `ArgumentError`.
 
 `Symbolic`s materialize to a single broadcast value (e.g. a timestep), unlike
 `Slot`s which materialize to per-cell arrays.
@@ -51,18 +55,18 @@ arithmetic done once at compile time, not broadcast cell-by-cell):
 
 ```julia
 @slot g Float64
-simplify(δ₊{1}(f + g))               # (f[ê₁] + g[ê₁]) - (f + g)
+simplify(δ₊{1}(f .+ g))               # (f[ê₁] + g[ê₁]) - (f + g)
 
 # All-Fill collapse + scalar folding in one pass:
-simplify(Fill(Const(2.0)) + Fill(Const(3.0)))   # Fill(Const(5.0))
-simplify(2 * (f + 3*f))                         # (2*1 + 2*3 = 8) ⇒ collapses inside Fill
+simplify(Fill(Const(2.0)) .+ Fill(Const(3.0)))   # Fill(Const(5.0))
+simplify(2 .* (f .+ 3 .* f))                     # (2*1 + 2*3 = 8) ⇒ collapses inside Fill
 ```
 
 The identity rules detect a structural `Zero`/`One` *by type*, a
 `Fill{<:Null}`/`Fill{<:Unity}` *by type* (matching the scalar-side dispatch),
 and a literal `Fill{<:Const}` *by value* (`iszero`/`isone` on the wrapped
 literal). The last is a deliberate departure from a stricter no-auto-fold
-stance — `f * Fill(Const(0.0))` annihilates to `Zero{Float64}()`, which is
+stance — `f .* Fill(Const(0.0))` annihilates to `Zero(Float64)`, which is
 mathematically correct.
 
 ## Differentiating into a stencil
@@ -75,16 +79,16 @@ differentiate(δ₊{1}(f), f)           # offsets (ô, ê₁), coefficients (-1,
 
 # variable coefficient — ∂(ψ·δ₊{1}(f))/∂f
 @slot ψ Float64
-differentiate(ψ * δ₊{1}(f), f)
+differentiate(ψ .* δ₊{1}(f), f)
 
 # nonlinear — ∂(f*f)/∂f = f + f
-differentiate(f * f, f)
+differentiate(f .* f, f)
 ```
 
 A Laplacian-shaped expression differentiates to the five-point star:
 
 ```julia
-lap = δ₋{1}(δ₊{1}(f)) + δ₋{2}(δ₊{2}(f))   # f[i±1] + f[j±1] - 4 f
+lap = δ₋{1}(δ₊{1}(f)) .+ δ₋{2}(δ₊{2}(f))  # f[i±1] + f[j±1] - 4 f
 differentiate(lap, f)                     # a Stencil that narrows to a star
 ```
 
@@ -94,8 +98,8 @@ structure to a single broadcast coefficient (an `AbstractTerm`, not a
 
 ```julia
 @symbolic τ Float64
-differentiate(τ * f, τ)              # === f       (a term)
-differentiate(τ * f, f)              # a Stencil   (offset ô, coefficient Fill(τ))
+differentiate(τ .* f, τ)             # === f       (a term)
+differentiate(τ .* f, f)             # a Stencil   (offset ô, coefficient Fill(τ))
 ```
 
 The scalar pieces of the expression — anything inside a `Fill{<:AbstractScalar}`
@@ -125,7 +129,7 @@ For a variable-coefficient operator, pass the substituted arrays instead of
 ```julia
 ψv  = collect(1.0:8.0)
 @slot ψ Float64
-sst = differentiate(ψ * δ₊{1}(f), f)
+sst = differentiate(ψ .* δ₊{1}(f), f)
 st  = build_stencil(sst, (ψ = ψv,))         # coefficients read from ψv
 ```
 
@@ -143,5 +147,5 @@ print(code_string(adv; name = :advect))
 ```
 
 A `Fill` materializes its wrapped value (recursively, for an
-`AbstractScalar`) once per cell — so `materialize(τ * f, (f = fv, τ = 0.5))`
+`AbstractScalar`) once per cell — so `materialize(τ .* f, (f = fv, τ = 0.5))`
 gives a kernel that reads `args.τ * args.f[i]`, not `args.τ[i] * args.f[i]`.

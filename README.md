@@ -24,7 +24,7 @@ using StaticArrays: SVector
 @slot ψ Float64
 
 # A symbolic grid expression (upwind advection):  out[i] = ψ[i] · (f[i+1] − f[i])
-expr = ψ * δ₊{1}(f)
+expr = ψ .* δ₊{1}(f)
 
 # Inspect the per-cell kernel that materialize compiles:
 print(code_string(expr; name = :advect))
@@ -45,13 +45,17 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 ## What it provides
 
 - **Term types** `Slot{S,T}` (per-cell field), `Fill{T}` (scalar broadcast),
-  the type-level identities `Zero`/`One`, `Pointwise`, and `Shifted`; the
-  (concrete) element type `T` is computed at construction. The `@slot` macro
-  binds a variable to a leaf named after it
+  the multiplicative identity `One`, the additive identity alias
+  `Zero{T} = Fill{Null{T}}`, `Pointwise`, and `Shifted`; the (concrete)
+  element type `T` is computed at construction. The `@slot` macro binds a
+  variable to a leaf named after it
   (`@slot f` ≡ `f = Slot{:f, Float64}()`; the type defaults to `Float64`).
-- **DSL**: component-wise operator overloads, `SVector` interception, indexing
-  sugar `f[-2ê₁]` (shift by a `StaticShift`), and the difference / sum functors
-  `δ₊`/`δ₋`/`σ₊`/`σ₋` (`FwdDiff`/`BwdDiff`/`FwdSum`/`BwdSum`).
+- **DSL**: pointwise expressions are built with broadcast syntax
+  (`f .* g`, `sin.(f)`) — un-dotted Base operators are reserved for scalar-land
+  (`τ * ψ`). `SVector` interception, indexing sugar `f[-2ê₁]` (shift by a
+  `StaticShift`), and the difference / sum functors `δ₊`/`δ₋`/`σ₊`/`σ₋`
+  (`FwdDiff`/`BwdDiff`/`FwdSum`/`BwdSum`) are not Base operators and stay as
+  function-call syntax.
 - **`simplify`** — a rule rewriter (shift composition/pushdown, identities on
   `Zero`/`One`, constant folding via `POINTWISE_DEFAULT_RULES`).
 - **`differentiate(t, ::Slot)`** — row-anchored symbolic differentiation onto a
@@ -74,8 +78,10 @@ position-independent scalar into the pointwise world.
 | Named symbolic leaf | `Var{S,T}` | `Slot{S,T}` |
 | Literal / constant leaf | `Constant{T}(val)` | `Fill(Constant(val))` |
 | Interior (composite) node | `Scalar{F,A,T}` | `Pointwise{F,A,T}` |
-| Additive identity (structural zero) | `Null{T}` | `Zero{T}` |
+| Additive identity (structural zero) | `Null{T}` | `Zero{T} = Fill{Null{T}}` |
 | Multiplicative identity (structural one) | `Unity{T}` | `One{T}` |
+| Construction syntax (binary) | `τ * ψ`, `τ + ψ` | `f .* g`, `f .+ g` |
+| Construction syntax (unary) | `sin(τ)`, `-τ` | `sin.(f)`, `.-f` |
 | Spatial shift node | — | `Shifted{Sh,T,U}` |
 | Scalar-to-pointwise bridge | — (source) | `Fill{T}` (wraps `AbstractScalar`) |
 | Constructor macro | `@var` | `@slot` |
@@ -83,11 +89,13 @@ position-independent scalar into the pointwise world.
 | Register a derivative rule | `@scalar_rule` | `@pointwise_rule` |
 | `differentiate` return type | `AbstractScalar` | `Stencil{RowAccess}` |
 
-The `Null`/`Zero` and `Unity`/`One` pairs are structurally identical in
-purpose — type-level identities that let `simplify` and `differentiate`
-collapse algebraically by dispatch. They differ in `T`: scalar-side types
-require a Bool-shaped `T` (routing through `_to_bool_shape`); pointwise-side
-types accept any concrete element type directly.
+`Zero` is a thin alias for `Fill{Null{T}}` — it reuses scalar-land's `Null` as
+the structural zero and lifts it into pointwise-land via the existing `Fill`
+bridge. Like `Null`, its `T` is bool-shaped (the outer ctors map any concrete
+value-space type through `_to_bool_shape`), and `eltype(Zero(Float64)) === Bool`
+— promotion in surrounding arithmetic recovers the cell type. `One` and `Unity`
+play the parallel multiplicative role: type-level identities that let
+`simplify` and `differentiate` collapse algebraically by dispatch.
 
 ## Design principle: type parameters are *structure*, values are *data*
 
@@ -106,10 +114,11 @@ data** — values computed or substituted later.
 - **`0` and `1` are the exception — because they *are* structure.** The
   additive/multiplicative identities are the neutral and annihilating elements
   that make differentiation collapse and let `simplify` rewrite *by dispatch*
-  (`Zero + x → x`, `One * x → x`, `_ * Zero → Zero`) with no runtime
+  (`Zero .+ x → x`, `One .* x → x`, `_ .* Zero → Zero`) with no runtime
   `iszero`/`isone` probing. That is why — and *only* why — they are promoted to
-  the type level as `Zero{T}` / `One{T}`. A user-written `Fill(Constant(0.0))` is left
-  alone (the input is assumed reasonably simplified).
+  the type level as `Zero{T}` (`Fill{Null{T}}`) / `One{T}`. A user-written
+  `Fill(Constant(0.0))` is now folded too (the simplify rule treats a literal
+  `Fill(Constant(0))` as a real zero).
 
 This split is what lets the same expression be reasoned about symbolically
 (type-level shifts, dispatch-driven simplification) yet carry arbitrary runtime
