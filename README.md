@@ -37,8 +37,8 @@ fv = rand(16); ψv = rand(16)
 lazy = materialize(expr, (f = fv, ψ = ψv))     # LazyArray, axes (1:15,)
 
 # Differentiate w.r.t. f → a row-anchored Stencil, then build a CSC matrix:
-sst = differentiate(expr, f)                   # StencilCore.Stencil{RowAccess}
-st  = build_stencil(sst, (ψ = ψv,))            # → LinearStencil{ColumnAccess}
+sst = differentiate(expr, f)                   # StencilCore.Stencil{RowAccess, Float64}
+st  = build_stencil(sst, (ψ = ψv,))            # → LinearStencil{…, ColumnAccess}
 A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 ```
 
@@ -87,7 +87,8 @@ position-independent scalar into the pointwise world.
 | Constructor macro | `@var` | `@slot` |
 | Default simplify rule set | `SCALAR_DEFAULT_RULES` | `POINTWISE_DEFAULT_RULES` |
 | Register a derivative rule | `@scalar_rule` | `@pointwise_rule` |
-| `differentiate` return type | `AbstractScalar` | `Stencil{RowAccess}` |
+| `differentiate` return type | `AbstractScalar` | `Stencil{RowAccess, T}` (T = common coef eltype) |
+| Multiplication of two operands | `τ * ψ` builds `Scalar(*, …)` | `u * v` raises `MethodError` — `*` is reserved for `stencil * pointwise` (currently a stubbed shell) |
 
 `Zero` is a thin alias for `Fill{Null{T}}` — it reuses scalar-land's `Null` as
 the structural zero and lifts it into pointwise-land via the existing `Fill`

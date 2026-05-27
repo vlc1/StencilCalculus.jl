@@ -47,6 +47,7 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 - **differentiate.jl** — Symbolic differentiation table (function-keyed rules, extensible via `@pointwise_rule`); row-anchored Jacobian coefficients
 - **materialize.jl** — Codegen to `Expr` → compiled kernel via `RuntimeGeneratedFunctions`; `LazyArray` wrapper
 - **bridge.jl** — Convert `Stencil{RowAccess} → ColumnAccess`, narrow to `LinearStencil`/`StarStencil`
+- **apply.jl** — `*(::AbstractStencil, ::AbstractPointwise)` reserved operator surface; three shells (one per concrete subtype) currently throw `"not yet implemented"`. See "Stencil application" below.
 - **trees.jl** — `AbstractTrees.jl` interface (for traversal)
 - **show.jl** — Component-form display (normal-form canonical printing)
 
@@ -78,7 +79,12 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 ### Differentiation & Row-Anchored Stencils
 - **Function-keyed rule table**: Derivative coefficients stored as a table of `(fn, (arg_indices)) -> derivative_expr` rules (ChainRules `frule` convention). Extend with `@pointwise_rule`.
 - **Row-anchored**: Jacobian coefficient at offset `δ` is `∂F/∂(shifted_arg)` evaluated at the **row index**—no shifts injected into the coefficient.
-- **Output**: `Stencil{RowAccess}` with per-offset coefficient terms; bridge converts to `ColumnAccess` (flips shifts: `Shifted(-δ, …)`) before narrowing.
+- **Output**: `Stencil{RowAccess, T}` with per-offset coefficient terms, where `T` is the *common* coefficient eltype (strict uniformity check in the ctor; `Fill{<:Null}` / `Fill{<:Unity}` are wildcards). Bridge converts to `ColumnAccess` (flips shifts: `Shifted(-δ, …)`) before narrowing. Mixed-eltype literals in the input (e.g. `3 .* f` on a `Slot{:f, Float64}`) will error at `Stencil` construction with a clear message — promote literals to match (`3.0`).
+
+### Stencil application: `*(stencil, pointwise)`
+- **Reserved operator**, currently stubbed: any of `Base.*(::Stencil, ::AbstractPointwise)`, `Base.*(::LinearStencil, ::AbstractPointwise)`, `Base.*(::StarStencil, ::AbstractPointwise)` throws an `ErrorException` whose message includes `"not yet implemented"`. Implementation lands in a follow-up step.
+- **Eltype-match rule** (planned, not yet enforced inside the shells): a `Stencil{S, T}` may multiply an `AbstractPointwise{U}` only when `T === _unity_space(U)` — the same diagonal `_jacobian_type(U, U)` uses. Scalar-on-scalar for `U <: Number`; `SMatrix{N, N, F}`-on-`SVector{N, F}` for vector-valued fields.
+- **`*(::AbstractPointwise, ::AbstractPointwise)` remains unsupported** by design. Multiplication on pointwise terms is reserved for stencil application; two `Slot`s, two `Pointwise`s, or any pair of `AbstractPointwise` operands raises `MethodError` (regression-guarded by tests).
 
 ### Codegen & Materialization
 - **`materialize` → compiled kernel**: Builds a Julia `Expr` from the term tree; executes via `RuntimeGeneratedFunctions.jl`.
@@ -94,6 +100,7 @@ build_stencil(…)            ← Bridge + narrow to LinearStencil/StarStencil (
 - **Rewriting & analysis**: `simplify`, `POINTWISE_DEFAULT_RULES`, `differentiate`, `derivative`, `Diff`, `∂`
 - **Materialization**: `materialize`, `code_string`, `LazyArray`
 - **Assembly bridge**: `build_stencil`, `densify`
+- **Stencil application**: `*(stencil, pointwise)` (reserved, shells; bodies TBD)
 - **Shift vocabulary** (from StencilCore): `StaticShift`, `SShift`, `StaticPair`, `SPair`, basis vectors `ê₁`–`ê₉`, zero shift `ô`
 
 ## Testing Patterns

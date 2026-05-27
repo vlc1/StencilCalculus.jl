@@ -229,8 +229,12 @@ and lowering one index of a `(1,1)`-tensor.
 ## Stencils as morphisms: application, algebra, composition
 
 An `AbstractStencil` is a *transformation of fields*: it should take a term and
-return a term. That operation is **not implemented today**, but it is the right
-way to think about the type, and it closes a loop with differentiation.
+return a term. The `*(stencil, pointwise)` operator surface is **reserved**
+today (three method shells on `Stencil` / `LinearStencil` / `StarStencil`) but
+its body is still stubbed — calling it throws `"not yet implemented"`. The
+type-level contract is in place though: an `AbstractStencil{S, T}` may multiply
+an `AbstractPointwise{U}` only when `T === _unity_space(U)` (scalar-on-scalar,
+or `SMatrix{N, N, F}`-on-`SVector{N, F}`).
 
 ### Applying a stencil to a term (direction)
 
@@ -314,7 +318,9 @@ The cleanest frame for everything above is categorical.
   "Jacobian" is the informal name for its image under this functor.
 
 What is implemented: the linear category of stencils, the parallel scalar
-algebra, and the differential combinator on slots and symbolics. What is
-aspirational: stencil application and composition (`*`), the dagger as an
+algebra, and the differential combinator on slots and symbolics. The
+type-level dispatch surface for stencil application (`*`) is reserved but the
+implementation is stubbed (throws "not yet implemented"). What is still fully
+aspirational: stencil composition (`*` on two stencils), the dagger as an
 explicit operation, and the tensor-valued (`SMatrix`) blocks of the section
 above.

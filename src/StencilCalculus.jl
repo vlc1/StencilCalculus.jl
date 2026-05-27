@@ -10,7 +10,7 @@ using StencilCore: AbstractPointwise, AbstractScalar,
                    ô, ê₁, ê₂, ê₃, ê₄, ê₅, ê₆, ê₇, ê₈, ê₉,
                    var"@var"
 import StencilCore: simplify, materialize, differentiate, derivative,
-                    _scalar_body_expr
+                    _scalar_body_expr, _unity_space, _is_eltype_wildcard
 
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
@@ -21,6 +21,7 @@ include("simplify.jl")     # rule rewriter for AbstractPointwise
 include("differentiate.jl")# symbolic differentiation → Stencil{RowAccess} / AbstractPointwise
 include("materialize.jl")  # codegen → LazyArray; code_string
 include("bridge.jl")       # Stencil{RowAccess} → assemblable Linear/Star{ColumnAccess}
+include("apply.jl")        # `*(stencil, pointwise)` shells (bodies TBD)
 include("show.jl")         # component-form display of normal-form terms
 
 # Concrete pointwise types + their constructor macros.

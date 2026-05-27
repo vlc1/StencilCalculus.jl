@@ -2,8 +2,8 @@ using StencilCalculus
 using Test
 using AbstractTrees
 using StaticArrays: SVector, SMatrix, SUnitRange
-using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
-                   ColumnAccess, as_linear, as_star
+using StencilCore: AbstractStencil, Stencil, LinearStencil, StarStencil, AccessStyle,
+                   RowAccess, ColumnAccess, as_linear, as_star
 using StencilAssembly: build
 
 @testset "StencilCalculus" begin
@@ -311,7 +311,9 @@ using StencilAssembly: build
 
         @testset "the design-doc example" begin
             # g = f[i-2] - 4 f[i-1] + 3 f[i]; ∂/∂f has constant coefficients.
-            expr = f[-2ê₁] .- 4 .* f[-ê₁] .+ 3 .* f[]
+            # Literals are Float64 to match the slot's eltype — required for
+            # the strict eltype-uniformity check in Stencil's ctor.
+            expr = f[-2ê₁] .- 4.0 .* f[-ê₁] .+ 3.0 .* f[]
             sst = differentiate(expr, f)
             @test sst.shifts === (-2ê₁, -ê₁, ô)
             @test as_linear(sst) isa LinearStencil{1, -2, 3}
@@ -444,7 +446,7 @@ using StencilAssembly: build
             sst = differentiate(δ₊{1}(f), f)
             n = 6
             st = build_stencil(sst; size = (n,))
-            @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, <:Any, ColumnAccess}
+            @test st isa LinearStencil{1, 0, 2, Float64, <:Any, ColumnAccess}
             @test st.term[1] == SVector(-1.0, 1.0)              # column-anchored coefficients
             ref = build(LinearStencil{1}(SUnitRange(0, 1), fill(SVector(-1.0, 1.0), n)),
                         (1:n,), (1:n,))
@@ -458,7 +460,7 @@ using StencilAssembly: build
             sst = differentiate(lap, f)
             n1, n2 = 5, 4
             st = build_stencil(sst; size = (n1, n2))
-            @test st isa StarStencil{1, 2, 5, SVector{5, Float64}, <:Any, ColumnAccess}
+            @test st isa StarStencil{1, 2, 5, Float64, <:Any, ColumnAccess}
             @test st.term[2, 2] == SVector(1.0, 1.0, -4.0, 1.0, 1.0)
             ref = build(StarStencil{1}(fill(SVector(1.0, 1.0, -4.0, 1.0, 1.0), n1, n2)),
                         (1:n1, 1:n2), (1:n1, 1:n2))
@@ -472,7 +474,7 @@ using StencilAssembly: build
             @test AccessStyle(sst) === RowAccess()
             ψv = collect(1.0:8.0)
             st = build_stencil(sst, (ψ = ψv,))
-            @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, <:Any, ColumnAccess}
+            @test st isa LinearStencil{1, 0, 2, Float64, <:Any, ColumnAccess}
             # column c=3 (within the shrunk axes): SVector(-ψ[3], ψ[2])
             @test st.term[3] == SVector(-ψv[3], ψv[2])
             @test axes(st.term, 1) == 2:8                       # shrunk by the −1 coefficient shift
@@ -480,7 +482,7 @@ using StencilAssembly: build
 
         @testset "offset-padding (densify) for a gappy result" begin
             f = Slot{:f, Float64}()
-            sst = differentiate(f[-2ê₁] .+ 3 .* f[], f)         # offsets {-2, 0} — gap at -1
+            sst = differentiate(f[-2ê₁] .+ 3.0 .* f[], f)       # offsets {-2, 0} — gap at -1
             @test sst.shifts === (-2ê₁, ô)
 
             # densify fills the gap with a Zero coefficient.
@@ -493,7 +495,7 @@ using StencilAssembly: build
             @test_throws ArgumentError build_stencil(sst; size = (n,))
             # with padding it narrows and assembles
             st = build_stencil(sst; size = (n,), pad = true)
-            @test st isa LinearStencil{1, -2, 3, SVector{3, Float64}, <:Any, ColumnAccess}
+            @test st isa LinearStencil{1, -2, 3, Float64, <:Any, ColumnAccess}
             @test st.term[1] == SVector(1.0, 0.0, 3.0)
             ref = build(LinearStencil{1}(SUnitRange(-2, 0), fill(SVector(1.0, 0.0, 3.0), n)),
                         (1:n,), (1:n,))
@@ -505,6 +507,59 @@ using StencilAssembly: build
             lap = δ₋{1}(δ₊{1}(f)) .+ δ₋{2}(δ₊{2}(f))
             @test densify(differentiate(lap, f)).shifts === (-ê₂, -ê₁, ô, ê₁, ê₂)
         end
+    end
+
+    @testset "stencil * pointwise (shells)" begin
+        # The `*(::AbstractStencil, ::AbstractPointwise)` surface is reserved
+        # for stencil application but currently stubbed; calling any of the
+        # three concrete-subtype methods throws `"not yet implemented"`.
+        f = Slot{:f, Float64}()
+
+        # Build one instance of each concrete stencil subtype. `Stencil` and
+        # `LinearStencil` come naturally from differentiation; `StarStencil`
+        # comes from the Laplacian pattern.
+        sst_general = differentiate(δ₊{1}(f), f)                  # Stencil{RowAccess}
+        @test sst_general isa Stencil
+
+        sst_linear = build_stencil(differentiate(δ₊{1}(f), f); size = (6,))
+        @test sst_linear isa LinearStencil
+
+        sst_star = build_stencil(
+            differentiate(δ₋{1}(δ₊{1}(f)) .+ δ₋{2}(δ₊{2}(f)), f); size = (5, 4))
+        @test sst_star isa StarStencil
+
+        # Each shell throws ErrorException with the expected message fragment.
+        for st in (sst_general, sst_linear, sst_star)
+            err = try
+                st * f
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("not yet implemented", err.msg)
+        end
+
+        # Regression guard: the deliberate "no `*` between two AbstractPointwise"
+        # discipline still holds. The shells dispatch only on AbstractStencil
+        # left operands and must not accidentally widen pointwise-pointwise
+        # multiplication.
+        @test_throws MethodError f * f
+        let g = Slot{:g, Float64}()
+            @test_throws MethodError f * g
+        end
+
+        # And the dispatch contract is visible: exactly three * methods whose
+        # first positional type is a concrete AbstractStencil subtype.
+        ms = methods(*)
+        stencil_methods = filter(m -> begin
+            sig = m.sig
+            sig isa UnionAll && (sig = Base.unwrap_unionall(sig))
+            length(sig.parameters) >= 2 || return false
+            t = sig.parameters[2]
+            t isa Type && t <: AbstractStencil
+        end, collect(ms))
+        @test length(stencil_methods) == 3
     end
 
 end

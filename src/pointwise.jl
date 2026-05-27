@@ -115,6 +115,13 @@ const Zero{T} = Fill{Null{T}}
 Zero(T::Type)       = Fill(Null(T))
 Zero(::T) where {T} = Fill(Null(T))
 
+# Bool-shape structural markers wrapped by `Fill`: a `Zero` (== `Fill{<:Null}`)
+# or a `Fill{<:Unity}`. Both materialize to `zero(T)`/`one(T)` of any
+# surrounding T via promotion, so when they appear as a Stencil coefficient
+# they do *not* pin the Stencil's coefficient eltype. See StencilCore's
+# `_is_eltype_wildcard` trait and the `Stencil` inner constructor.
+_is_eltype_wildcard(::Fill{<:Union{Null, Unity}}) = true
+
 # Promote a value to a term: AbstractPointwise passes through; AbstractScalar
 # wraps in Fill; anything else (Number, SMatrix, …) wraps as Fill(Constant(x))
 # so that the scalar algebra stays consistent and rule_fill_collapse can fold.
