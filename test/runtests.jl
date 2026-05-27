@@ -1,7 +1,7 @@
 using StencilCalculus
 using Test
 using AbstractTrees
-using StaticArrays: SVector, SUnitRange
+using StaticArrays: SVector, SMatrix, SUnitRange
 using StencilCore: Stencil, LinearStencil, StarStencil, AccessStyle, RowAccess,
                    ColumnAccess, as_linear, as_star
 using StencilAssembly: build
@@ -78,7 +78,7 @@ using StencilAssembly: build
         nested = f .* (g .+ Fill(Constant(2.0)))
         @test nested == Pointwise(*, (f, Pointwise(+, (g, Fill(Constant(2.0))))))
 
-        # Un-dotted Base operators are NOT overloaded on AbstractPointwise.
+        # Un-dotted Base operators are NOT overloaded on AbstractPointwise for scalar eltypes.
         @test_throws MethodError f * g
         @test_throws MethodError f + g
         @test_throws MethodError sin(f)
@@ -99,6 +99,47 @@ using StencilAssembly: build
         @test eltype(v) === SVector{2, Float64}
         # Genuine inhomogeneity is unconstructable.
         @test_throws ArgumentError Pointwise(+, (Slot{:s, String}(), Slot{:n, Float64}()))
+    end
+
+    @testset "un-dotted ops for StaticArray slots" begin
+        @slot u SVector{2, Float64}
+        @slot v SVector{2, Float64}
+
+        # + and - build Pointwise in the same way as .+ and .-
+        @test u + v === Pointwise(+, (u, v))
+        @test u - v === Pointwise(-, (u, v))
+        @test -u    === Pointwise(-, (u,))
+        @test eltype(u + v) === SVector{2, Float64}
+
+        # 2u / u * 2 wraps the number via asterm → Fill(Constant(…))
+        @test 2u    === Pointwise(*, (Fill(Constant(2)),   u))
+        @test u * 2 === Pointwise(*, (u, Fill(Constant(2))))
+        @test eltype(2u) === SVector{2, Float64}
+
+        # Scalar Float64 slots still raise MethodError for un-dotted ops.
+        f = Slot{:f, Float64}()
+        @test_throws MethodError f + u   # mixed: f is not <:StaticArray
+    end
+
+    @testset "StaticArray constant in broadcast" begin
+        V2  = SVector{2, Float64}
+        M22 = SMatrix{2, 2, Float64, 4}
+
+        @slot u V2
+        mat = M22(1., 0., 0., 1.)
+
+        # mat .* u  →  Pointwise(*, (Fill(Constant(mat)), u))
+        result = mat .* u
+        @test result isa Pointwise{typeof(*)}
+        @test result.args[1] === Fill(Constant(mat))
+        @test result.args[2] === u
+        @test eltype(result) === SVector{2, Float64}  # matrix * vector → vector
+
+        # reversed order
+        result2 = u .* mat
+        @test result2 isa Pointwise{typeof(*)}
+        @test result2.args[1] === u
+        @test result2.args[2] === Fill(Constant(mat))
     end
 
     @testset "getindex shift sugar" begin

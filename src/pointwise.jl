@@ -115,12 +115,12 @@ const Zero{T} = Fill{Null{T}}
 Zero(T::Type)       = Fill(Null(T))
 Zero(::T) where {T} = Fill(Null(T))
 
-# Promote a numeric literal / bare scalar to a term: literals canonicalise in
-# scalar-land first (`Fill(Const(x))`); bare scalars wrap (`Fill(s)`); terms
-# pass through.
+# Promote a value to a term: AbstractPointwise passes through; AbstractScalar
+# wraps in Fill; anything else (Number, SMatrix, …) wraps as Fill(Constant(x))
+# so that the scalar algebra stays consistent and rule_fill_collapse can fold.
 asterm(t::AbstractPointwise)   = t
 asterm(s::AbstractScalar) = Fill(s)
-asterm(x::Number)         = Fill(Constant(x))
+asterm(x)                 = Fill(Constant(x))
 
 Base.convert(::Type{<:AbstractPointwise}, x::Number)         = Fill(Constant(x))
 Base.convert(::Type{<:AbstractPointwise}, s::AbstractScalar) = Fill(s)

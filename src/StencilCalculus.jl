@@ -1,7 +1,7 @@
 module StencilCalculus
 
 using AbstractTrees
-import StaticArrays: SVector       # imported (not just `using`) so we can add a method
+import StaticArrays: SVector, StaticArray  # imported (not just `using`) so we can add methods
 using RuntimeGeneratedFunctions
 using StencilCore: AbstractPointwise, AbstractScalar,
                    Var, Constant, Null, Unity, Scalar, _assert_concrete,

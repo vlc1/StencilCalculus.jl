@@ -30,7 +30,10 @@ Base.BroadcastStyle(::Type{<:AbstractScalar})    = ScalarStyle()
 # PointwiseStyle absorbs everything we mix with.
 Base.BroadcastStyle(::PointwiseStyle, ::PointwiseStyle)                      = PointwiseStyle()
 Base.BroadcastStyle(::PointwiseStyle, ::ScalarStyle)                         = PointwiseStyle()
-Base.BroadcastStyle(::PointwiseStyle, ::Base.Broadcast.DefaultArrayStyle{0}) = PointwiseStyle()
+# PointwiseStyle absorbs all AbstractArrayStyle{N} (0-dim scalars, StaticArrays, …)
+# in both argument orders so that e.g. `mat .* u` and `u .* mat` work.
+Base.BroadcastStyle(::PointwiseStyle, ::Base.Broadcast.AbstractArrayStyle) = PointwiseStyle()
+Base.BroadcastStyle(::Base.Broadcast.AbstractArrayStyle, ::PointwiseStyle) = PointwiseStyle()
 
 # ScalarStyle absorbs Numbers (DefaultArrayStyle{0}) but always errors at copy.
 Base.BroadcastStyle(::ScalarStyle, ::ScalarStyle)                            = ScalarStyle()
@@ -67,6 +70,18 @@ Base.copy(::Base.Broadcast.Broadcasted{ScalarStyle}) = throw(ArgumentError(
 # broadcast machinery; intercept it directly to build a component-wise
 # `Pointwise(SVector, args)`. Scalars/numbers wrap via `asterm`.
 SVector(args::PointwiseLike...) = Pointwise(SVector, map(asterm, args))
+
+# --- Un-dotted arithmetic for AbstractPointwise{<:StaticArray} ---------------
+# For vector/matrix-valued fields, `+`, `-` and scalar scaling are the
+# primary operations (not broadcast variants), mirroring how SVector/SMatrix
+# arithmetic works outside the CAS. These overloads are intentionally
+# restricted to element types that are `<: StaticArray`; scalar-valued slots
+# (e.g. `Float64`) still raise `MethodError` on un-dotted operators.
+Base.:+(a::AbstractPointwise{<:StaticArray}, b::AbstractPointwise{<:StaticArray}) = Pointwise(+, (a, b))
+Base.:-(a::AbstractPointwise{<:StaticArray}, b::AbstractPointwise{<:StaticArray}) = Pointwise(-, (a, b))
+Base.:-(a::AbstractPointwise{<:StaticArray})                                       = Pointwise(-, (a,))
+Base.:*(c::Number, t::AbstractPointwise{<:StaticArray}) = Pointwise(*, (asterm(c), t))
+Base.:*(t::AbstractPointwise{<:StaticArray}, c::Number) = Pointwise(*, (t, asterm(c)))
 
 # --- Indexing-as-shift sugar ------------------------------------------------
 # `AbstractPointwise` is not `<: AbstractArray`, so `getindex` is free to mean
