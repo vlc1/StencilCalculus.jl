@@ -34,7 +34,11 @@ _idxvars(N::Integer) = N <= 3 ? [:i, :j, :k][1:N] : [Symbol(:i, d) for d in 1:N]
 
 _slotref(S, idxs) = Expr(:ref, Expr(:., :args, QuoteNode(S)), idxs...)   # args.S[idxs...]
 _body_expr(::Slot{S}, idx) where {S} = _slotref(S, idx)
-_body_expr(::One{T}, idx)   where {T} = Expr(:call, :one, T)
+# IdentityStencil materializes to `one(U)` where U is the value-space type
+# (second param). The bool-shape eltype T (first param) is purely structural
+# — used by `_is_eltype_wildcard`, not by materialize.
+_body_expr(::IdentityStencil{T, U}, idx) where {T, U} = Expr(:call, :one, U)
+_body_expr(d::DiagonalStencil, idx) = _body_expr(d.term, idx)
 # A Fill broadcasts a scalar/literal — no `idx`-dependence. For an
 # `AbstractScalar` payload, reuse StencilCore's scalar codegen.
 _body_expr(f::Fill{T}, idx) where {T<:AbstractScalar} = _scalar_body_expr(f.val)
@@ -51,7 +55,8 @@ _shifted_ix(v, o) = o == 0 ? v : Expr(:call, :+, v, o)
 
 # --- leaf / access collection ----------------------------------------------
 _collect_acc!(a, s::Slot{S}) where {S} = (push!(a, (S, ô)); a)
-_collect_acc!(a, ::Union{Fill, One}) = a
+_collect_acc!(a, ::Union{Fill, IdentityStencil}) = a
+_collect_acc!(a, d::DiagonalStencil) = _collect_acc!(a, d.term)
 _collect_acc!(a, t::Shifted) = (push!(a, (_slotsym(t.term), t.shift)); a)
 _collect_acc!(a, t::Pointwise)    = (foreach(x -> _collect_acc!(a, x), t.args); a)
 _accesses(t) = _collect_acc!(Tuple{Symbol, StaticShift}[], t)

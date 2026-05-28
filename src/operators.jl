@@ -93,8 +93,8 @@ Base.getindex(t::Shifted)                 = t
 Base.getindex(t::Shifted, s::StaticShift) = Shifted(t.term, t.shift + s)
 Base.getindex(t::Fill)                = t
 Base.getindex(t::Fill, ::StaticShift) = t
-Base.getindex(t::One)                 = t
-Base.getindex(t::One, ::StaticShift)  = t
+Base.getindex(t::IdentityStencil)                = t
+Base.getindex(t::IdentityStencil, ::StaticShift) = t
 # AbstractScalars are position-independent (same value everywhere).
 Base.getindex(s::AbstractScalar)                = s
 Base.getindex(s::AbstractScalar, ::StaticShift) = s

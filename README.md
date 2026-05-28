@@ -45,7 +45,9 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
 ## What it provides
 
 - **Term types** `Slot{S,T}` (per-cell field), `Fill{T}` (scalar broadcast),
-  the multiplicative identity `One`, the additive identity alias
+  the multiplicative identity `IdentityStencil{T,U}` (bool-shape `T`,
+  value-space `U`), `DiagonalStencil{T,A}` (wraps a pointwise term for
+  elementwise stencil application), the additive identity alias
   `Zero{T} = Fill{Null{T}}`, `Pointwise`, and `Shifted`; the (concrete)
   element type `T` is computed at construction. The `@slot` macro binds a
   variable to a leaf named after it
@@ -57,7 +59,7 @@ A   = build(st, (1:15,), (1:15,))              # SparseMatrixCSC
   (`FwdDiff`/`BwdDiff`/`FwdSum`/`BwdSum`) are not Base operators and stay as
   function-call syntax.
 - **`simplify`** — a rule rewriter (shift composition/pushdown, identities on
-  `Zero`/`One`, constant folding via `POINTWISE_DEFAULT_RULES`).
+  `Zero`/`IdentityStencil`, constant folding via `POINTWISE_DEFAULT_RULES`).
 - **`differentiate(t, ::Slot)`** — row-anchored symbolic differentiation onto a
   `Stencil{RowAccess}`.
 - **`materialize`** / **`code_string`** — codegen to a `LazyArray` (via
@@ -79,7 +81,7 @@ position-independent scalar into the pointwise world.
 | Literal / constant leaf | `Constant{T}(val)` | `Fill(Constant(val))` |
 | Interior (composite) node | `Scalar{F,A,T}` | `Pointwise{F,A,T}` |
 | Additive identity (structural zero) | `Null{T}` | `Zero{T} = Fill{Null{T}}` |
-| Multiplicative identity (structural one) | `Unity{T}` | `One{T}` |
+| Multiplicative identity (structural one) | `Unity{T}` | `IdentityStencil{T,U}` |
 | Construction syntax (binary) | `τ * ψ`, `τ + ψ` | `f .* g`, `f .+ g` |
 | Construction syntax (unary) | `sin(τ)`, `-τ` | `sin.(f)`, `.-f` |
 | Spatial shift node | — | `Shifted{Sh,T,U}` |
@@ -88,15 +90,19 @@ position-independent scalar into the pointwise world.
 | Default simplify rule set | `SCALAR_DEFAULT_RULES` | `POINTWISE_DEFAULT_RULES` |
 | Register a derivative rule | `@scalar_rule` | `@pointwise_rule` |
 | `differentiate` return type | `AbstractScalar` | `Stencil{RowAccess, T}` (T = common coef eltype) |
-| Multiplication of two operands | `τ * ψ` builds `Scalar(*, …)` | `u * v` raises `MethodError` — `*` is reserved for `stencil * pointwise` (currently a stubbed shell) |
+| Multiplication of two operands | `τ * ψ` builds `Scalar(*, …)` | `u * v` raises `MethodError` for raw pointwise terms; `*` is the stencil-application surface (`IdentityStencil`/`DiagonalStencil` bodies implemented, the three `NeighborhoodStencil` shells still TBD) |
 
 `Zero` is a thin alias for `Fill{Null{T}}` — it reuses scalar-land's `Null` as
 the structural zero and lifts it into pointwise-land via the existing `Fill`
 bridge. Like `Null`, its `T` is bool-shaped (the outer ctors map any concrete
 value-space type through `_to_bool_shape`), and `eltype(Zero(Float64)) === Bool`
-— promotion in surrounding arithmetic recovers the cell type. `One` and `Unity`
-play the parallel multiplicative role: type-level identities that let
-`simplify` and `differentiate` collapse algebraically by dispatch.
+— promotion in surrounding arithmetic recovers the cell type. `IdentityStencil`
+and `Unity` play the parallel multiplicative role: bool-shape type-level
+identities that let `simplify` and `differentiate` collapse algebraically by
+dispatch. `IdentityStencil` carries an extra value-space parameter `U` so it
+can materialize to `one(U)` (e.g. `one(Float64) === 1.0`), while its dispatched
+`eltype === T` (bool-shape) keeps it from pinning a `Stencil`'s coefficient
+eltype.
 
 ## Design principle: type parameters are *structure*, values are *data*
 
@@ -115,11 +121,11 @@ data** — values computed or substituted later.
 - **`0` and `1` are the exception — because they *are* structure.** The
   additive/multiplicative identities are the neutral and annihilating elements
   that make differentiation collapse and let `simplify` rewrite *by dispatch*
-  (`Zero .+ x → x`, `One .* x → x`, `_ .* Zero → Zero`) with no runtime
-  `iszero`/`isone` probing. That is why — and *only* why — they are promoted to
-  the type level as `Zero{T}` (`Fill{Null{T}}`) / `One{T}`. A user-written
-  `Fill(Constant(0.0))` is now folded too (the simplify rule treats a literal
-  `Fill(Constant(0))` as a real zero).
+  (`Zero .+ x → x`, `IdentityStencil .* x → x`, `_ .* Zero → Zero`) with no
+  runtime `iszero`/`isone` probing. That is why — and *only* why — they are
+  promoted to the type level as `Zero{T}` (`Fill{Null{T}}`) / `IdentityStencil{T,U}`.
+  A user-written `Fill(Constant(0.0))` is now folded too (the simplify rule
+  treats a literal `Fill(Constant(0))` as a real zero).
 
 This split is what lets the same expression be reasoned about symbolically
 (type-level shifts, dispatch-driven simplification) yet carry arbitrary runtime

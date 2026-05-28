@@ -17,7 +17,7 @@ other (see also [StencilCore](https://vlc1.github.io/StencilCore.jl/dev/)):
 | literal carrier         | `Const{T}` with `val::T`       | — (via `Fill(Const(…))`)    |
 | interior tree node      | `Scalar{F, A, T}`              | `Term{F, A, T}`             |
 | additive identity       | `Null{T}`                      | `Zero{T} = Fill{Null{T}}`    |
-| multiplicative identity | `Unity{T}`                     | `One{T}`                    |
+| multiplicative identity | `Unity{T}`                     | `IdentityStencil{T, U}`     |
 
 A scalar has no spatial extent (one materialized value); a term is array-like
 (per-cell). The two are bridged by **[`Fill{T}`](@ref)**, a term that wraps a
@@ -49,7 +49,7 @@ Fill(Const(2.0))[3ê₁ + ê₂]   # === Fill(Const(2.0))
 
 The same rule lives in `simplify` as
 `rule_shift_const`: `Shifted(s, ::Fill) → ::Fill`, and analogously for `Zero`
-and `One`. A shift can never reach a position-independent leaf, whether it is
+and `IdentityStencil`. A shift can never reach a position-independent leaf, whether it is
 written directly (`f[ê₁]` collapses) or produced by pushing a shift down a
 tree.
 
@@ -64,7 +64,7 @@ mutated). The conventions:
 | `Slot{:f}()`               | `f[]`                 |
 | `f[ê₁]` (a shift)          | `f[ê₁]`               |
 | `Zero(T)`                  | `0`                   |
-| `One{T}()`                 | `1`                   |
+| `IdentityStencil(T)`       | `I`                   |
 | `Fill(Const(2.0))`         | `2.0`                 |
 | `Fill(Symbolic{:τ,T}())`   | `τ`                   |
 | `Fill(Scalar(*, (Const(2), τ)))` | `(2 * τ)`       |
@@ -81,13 +81,14 @@ A `Fill` prints as its wrapped value via the scalar-side `show`, without
 square brackets — `Fill(τ)` is `τ`, *not* `τ[]`. The bracket notation is
 reserved for spatially-indexed leaves (`Slot` and `Shifted`).
 
-!!! note "Why the glyphs `0`/`1`"
-    `Zero`/`One` (and their scalar-side analogues `Null`/`Unity`) are
-    *symbolic* identities — structure, not data — so they print as the bare
-    glyphs `0`/`1` regardless of `T`. `Zero(Float64)` shows `0`, not `0.0`.
-    The display stays type-agnostic and no value is ever constructed, which
-    keeps it faithful to their role as the structural neutrals that drive
-    `simplify` and make the chain rule collapse.
+!!! note "Why the glyphs `0`/`I`"
+    `Zero`/`IdentityStencil` (and their scalar-side analogues `Null`/`Unity`,
+    which print `0`/`U`) are *symbolic* identities — structure, not data — so
+    they print as bare glyphs regardless of `T`/`U`. `Zero(Float64)` shows `0`,
+    not `0.0`; `IdentityStencil(Float64)` shows `I`. The display stays type-
+    agnostic and no value is ever constructed, which keeps it faithful to their
+    role as the structural neutrals that drive `simplify` and make the chain
+    rule collapse.
 
 ## Differentiation: the concrete behaviour
 
@@ -104,10 +105,11 @@ two methods on the same generic, dispatched by the kind of the variable:
   the way back into term-land, producing a single broadcast coefficient — an
   `AbstractTerm`, not a `Stencil`.
 
-**Is the derivative of `One{T}()` equal to `Zero(T)`?** Effectively yes,
-but no literal `Zero` object is produced for a Slot-independent leaf.
-`One`, `Zero`, `Fill` and a `Shifted` of an unrelated `Slot` all contribute
-the **empty** set of offset/coefficient pairs to the Slot derivative — which
+**Is the derivative of `IdentityStencil(T)` equal to `Zero(T)`?** Effectively
+yes, but no literal `Zero` object is produced for a Slot-independent leaf.
+`IdentityStencil`, `Zero`, `Fill` and a `Shifted` of an unrelated `Slot` all
+contribute the **empty** set of offset/coefficient pairs to the Slot
+derivative — which
 is exactly "zero" in this representation. A derivative that is empty
 everywhere makes `differentiate` throw rather than return a degenerate
 stencil: the package deliberately does not fabricate spurious zeros.
@@ -166,7 +168,7 @@ structure to broadcast over.
 
 The corresponding identity check (`f .* Fill(Const(0)) → Zero`) uses a small
 helper, `_is_term_zero` / `_is_term_one`, that is **type-dispatched** on
-`Zero`/`One` and on `Fill{<:Null}` / `Fill{<:Unity}`, and **value-dispatched**
+`Zero`/`IdentityStencil` and on `Fill{<:Null}` / `Fill{<:Unity}`, and **value-dispatched**
 on a literal `Fill{<:Const}` (via `iszero`/`isone` on the wrapped value). A
 `Fill` wrapping a symbolic scalar (`Fill(Symbolic{S})`, `Fill(Scalar(…))`)
 is never treated as an identity — its runtime value is unknown.
@@ -229,12 +231,16 @@ and lowering one index of a `(1,1)`-tensor.
 ## Stencils as morphisms: application, algebra, composition
 
 An `AbstractStencil` is a *transformation of fields*: it should take a term and
-return a term. The `*(stencil, pointwise)` operator surface is **reserved**
-today (three method shells on `Stencil` / `LinearStencil` / `StarStencil`) but
-its body is still stubbed — calling it throws `"not yet implemented"`. The
-type-level contract is in place though: an `AbstractStencil{S, T}` may multiply
-an `AbstractPointwise{U}` only when `T === _unity_space(U)` (scalar-on-scalar,
-or `SMatrix{N, N, F}`-on-`SVector{N, F}`).
+return a term. The `*(stencil, pointwise)` operator surface is partially
+implemented today: the two *diagonal* stencils (`IdentityStencil`,
+`DiagonalStencil`, both `<: AbstractPointwise <: AbstractStencil`) have working
+bodies, while the three `NeighborhoodStencil` subtypes
+(`Stencil` / `LinearStencil` / `StarStencil`) still throw
+`"not yet implemented"`. The type-level contract: an `AbstractStencil{T}` may
+multiply an `AbstractPointwise{U}` only when `T === _unity_space(U)` (for
+`DiagonalStencil` / `NeighborhoodStencil`) or
+`T === _to_bool_shape(_unity_space(U))` (for `IdentityStencil`, whose `T` is
+bool-shape) — scalar-on-scalar, or `SMatrix{N, N, F}`-on-`SVector{N, F}`.
 
 ### Applying a stencil to a term (direction)
 

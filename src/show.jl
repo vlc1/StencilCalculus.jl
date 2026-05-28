@@ -1,20 +1,28 @@
 # Pretty-printing of grid expressions in component form. `show` always renders
 # the *normal form* (`simplify`'d) of a term; it never mutates the term itself.
-# Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `One` → `1` (type-
-# agnostic), `Fill` → its wrapped value via the scalar-side show. The [`Zero`](@ref)
-# alias is a `Fill{<:Null}`, so it renders as `0` via Null's scalar-side glyph.
+# Leaf renderings: `Slot` → `f[]`, shifted `Slot` → `f[ê₁]`, `IdentityStencil`
+# → `I` (type-agnostic, mirroring scalar-side `Unity`'s `U`), `Fill` → its
+# wrapped value via the scalar-side show, `DiagonalStencil(t)` → `diag(<t>)`.
+# The [`Zero`](@ref) alias is a `Fill{<:Null}`, so it renders as `0` via
+# Null's scalar-side glyph.
 
 const _INFIX = (:+, :-, :*, :/, :\, :^)
 
 Base.show(io::IO, t::AbstractPointwise) = _show(io, simplify(t))
 
 _show(io::IO, ::Slot{S}) where {S} = print(io, S, "[]")
-_show(io::IO, ::One)               = print(io, '1')
+_show(io::IO, ::IdentityStencil)   = print(io, 'I')
 # A Fill is rendered as its wrapped value: AbstractScalar uses Core's scalar
 # show; a literal uses Base.show directly. Either way, no `[]` (Fill has no
 # spatial index).
 _show(io::IO, f::Fill{T}) where {T<:AbstractScalar} = show(io, f.val)
 _show(io::IO, f::Fill)                              = show(io, f.val)
+
+function _show(io::IO, d::DiagonalStencil)
+    print(io, "diag(")
+    _show(io, d.term)
+    print(io, ')')
+end
 
 function _show(io::IO, t::Shifted)
     t.term isa Slot || error("display expects normal-form input (shifts on slots)")

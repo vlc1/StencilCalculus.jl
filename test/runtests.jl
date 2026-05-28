@@ -2,8 +2,9 @@ using StencilCalculus
 using Test
 using AbstractTrees
 using StaticArrays: SVector, SMatrix, SUnitRange
-using StencilCore: AbstractStencil, Stencil, LinearStencil, StarStencil, AccessStyle,
-                   RowAccess, ColumnAccess, as_linear, as_star
+using StencilCore: AbstractStencil, NeighborhoodStencil, Stencil, LinearStencil,
+                   StarStencil, AccessStyle, RowAccess, ColumnAccess,
+                   as_linear, as_star
 using StencilAssembly: build
 
 @testset "StencilCalculus" begin
@@ -17,13 +18,22 @@ using StencilAssembly: build
         # `Zero(Float64)` literally has eltype `Bool` (it stores a Null{Bool}).
         # Promotion in surrounding arithmetic still yields the right cell type.
         @test eltype(Zero(Float64)) === Bool
-        @test eltype(One{Int}()) === Int
+        # `IdentityStencil` carries a bool-shape eltype (Unity-parallel): the
+        # outer ctor maps the value-space type to its bool shape, so
+        # `IdentityStencil(Float64) === IdentityStencil{Bool, Float64}()` and
+        # its `eltype` is `Bool`. Promotion in surrounding arithmetic recovers
+        # the value type.
+        @test eltype(IdentityStencil(Float64)) === Bool
+        @test eltype(IdentityStencil(SVector{2, Float64})) === SMatrix{2, 2, Bool, 4}
+        @test IdentityStencil(Float64) === IdentityStencil{Bool, Float64}()
         # Outer ctors bool-shape the cell type, so `Zero(Integer)` and
         # `Zero(Bool)` are the same singleton.
         @test Zero(Integer) === Zero(Bool)
         # T must be concrete: an abstract eltype can never be materialized.
         @test_throws ArgumentError Slot{:f, Number}()
-        @test_throws ArgumentError One{Real}()
+        # IdentityStencil rejects non-bool-shape inner ctors and non-square U.
+        @test_throws ArgumentError IdentityStencil{Float64, Float64}()       # T not bool-shape
+        @test_throws ArgumentError IdentityStencil(SVector{2})               # SVector lacks one(U)
 
         # Fill: literal payload (eltype = T) and AbstractScalar payload
         # (eltype unwraps the scalar via recursive specialization).
@@ -158,7 +168,7 @@ using StencilAssembly: build
         @test g isa Pointwise
 
         # Position-independent term leaves are shift-invariant.
-        Z = Zero(Float64); I1 = One{Float64}(); φ = Fill(Constant(3.0))
+        Z = Zero(Float64); I1 = IdentityStencil(Float64); φ = Fill(Constant(3.0))
         @test Z[ê₁] === Z && Z[] === Z
         @test I1[ê₁] === I1 && I1[] === I1
         @test φ[3ê₁ + ê₂] === φ && φ[] === φ
@@ -178,7 +188,7 @@ using StencilAssembly: build
         @test repr(Fill(Constant(2.0))) == "2.0"                   # Fill renders its payload
         @test repr(Fill(τ)) == "τ"                              # symbolic Fill
         @test repr(Zero(Float64)) == "0"                        # type-agnostic glyphs
-        @test repr(One{Float64}()) == "1"
+        @test repr(IdentityStencil(Float64)) == "I"
         @test repr(τ .* δ₊{1}(f)) == "(τ * (f[ê₁] - f[]))"      # infix
         @test repr(Pointwise(exp, (x,))) == "exp(x[])"          # call form
         @test repr(SVector(f, x)) == "SVector(f[], x[])"
@@ -215,7 +225,7 @@ using StencilAssembly: build
         # The `Zero` alias = `Fill{<:Null}`, so its nodevalue is the wrapped Null
         # (via the generic `Fill` overload) — not a numeric zero literal.
         @test AbstractTrees.nodevalue(Zero(Float64)) === Null{Bool}()
-        @test AbstractTrees.nodevalue(One{Int}()) === 1
+        @test AbstractTrees.nodevalue(IdentityStencil(Int)) === 1
         sh = f[ê₁]
         @test AbstractTrees.children(sh) === (f,)
         @test AbstractTrees.nodevalue(sh) === ê₁
@@ -223,7 +233,7 @@ using StencilAssembly: build
 
     @testset "simplify" begin
         f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
-        Z = Zero(Float64); I1 = One{Float64}()
+        Z = Zero(Float64); I1 = IdentityStencil(Float64)
 
         # No-op on a normal-form expression / a leaf.
         @test simplify(f) === f
@@ -241,10 +251,10 @@ using StencilAssembly: build
 
         # Shift over a Fill (position-independent) is a no-op.
         @test simplify(Shifted(ê₁, Fill(Constant(2.0)))) === Fill(Constant(2.0))
-        @test simplify(Shifted(ê₁, Zero(Float64))) === Z         # also Zero / One
-        @test simplify(Shifted(ê₁, One{Float64}())) === I1
+        @test simplify(Shifted(ê₁, Zero(Float64))) === Z         # also Zero / IdentityStencil
+        @test simplify(Shifted(ê₁, IdentityStencil(Float64))) === I1
 
-        # Identity / annihilator on Zero/One (type-dispatched).
+        # Identity / annihilator on Zero/IdentityStencil (type-dispatched).
         @test simplify(f .+ Z) === f
         @test simplify(Z .+ f) === f
         @test simplify(f .* I1) === f
@@ -301,7 +311,7 @@ using StencilAssembly: build
             @test sst isa Stencil
             @test AccessStyle(sst) === RowAccess()
             @test sst.shifts === (ô, ê₁)                        # reverse-lex (offset 0, then +1)
-            @test sst.terms == (Pointwise(-, (One{Float64}(),)), One{Float64}())   # SoA: one coef per offset
+            @test sst.terms == (Pointwise(-, (IdentityStencil(Float64),)), IdentityStencil(Float64))   # SoA: one coef per offset
             # narrows to a contiguous LinearStencil along axis 1, offsets 0:1
             ln = as_linear(sst)
             @test ln isa LinearStencil{1, 0, 2}
@@ -509,57 +519,79 @@ using StencilAssembly: build
         end
     end
 
-    @testset "stencil * pointwise (shells)" begin
-        # The `*(::AbstractStencil, ::AbstractPointwise)` surface is reserved
-        # for stencil application but currently stubbed; calling any of the
-        # three concrete-subtype methods throws `"not yet implemented"`.
-        f = Slot{:f, Float64}()
+    @testset "stencil * pointwise" begin
+        # `*(::AbstractStencil, ::AbstractPointwise)` is the stencil-application
+        # surface. The two diagonal stencils (`IdentityStencil`,
+        # `DiagonalStencil`) have working bodies; the three `NeighborhoodStencil`
+        # subtypes (`Stencil`, `LinearStencil`, `StarStencil`) remain shells
+        # that throw "not yet implemented".
+        f = Slot{:f, Float64}(); g = Slot{:g, Float64}()
 
-        # Build one instance of each concrete stencil subtype. `Stencil` and
-        # `LinearStencil` come naturally from differentiation; `StarStencil`
-        # comes from the Laplacian pattern.
-        sst_general = differentiate(δ₊{1}(f), f)                  # Stencil{RowAccess}
-        @test sst_general isa Stencil
+        @testset "IdentityStencil application" begin
+            # The pointwise operand passes through unchanged.
+            @test IdentityStencil(Float64) * f === f
+            # Eltype-match: IdentityStencil(SVector{N, F}) on AbstractPointwise{SVector{N, F}}
+            # is the SMatrix-vs-SVector pairing; scalar-on-SVector mismatches throw.
+            @test_throws ArgumentError IdentityStencil(SVector{2, Float64}) * f
+        end
 
-        sst_linear = build_stencil(differentiate(δ₊{1}(f), f); size = (6,))
-        @test sst_linear isa LinearStencil
+        @testset "DiagonalStencil application" begin
+            τ = Var{:τ, Float64}()
+            d = DiagonalStencil(Fill(τ))
+            # Apply broadcasts: `d * f == Pointwise(*, (d.term, f))`.
+            @test d * f == Pointwise(*, (Fill(τ), f))
+            # Diagonal of a Slot acts as a coefficient field.
+            @test DiagonalStencil(g) * f == Pointwise(*, (g, f))
+            # Eltype-match rejects scalar-on-vector etc.
+            v = Slot{:v, SVector{2, Float64}}()
+            @test_throws ArgumentError DiagonalStencil(Fill(τ)) * v
+            # Squareness gate: DiagonalStencil wrapping an SVector-valued term
+            # is rejected (SVector lacks `one`).
+            @test_throws ArgumentError DiagonalStencil(v)
+        end
 
-        sst_star = build_stencil(
-            differentiate(δ₋{1}(δ₊{1}(f)) .+ δ₋{2}(δ₊{2}(f)), f); size = (5, 4))
-        @test sst_star isa StarStencil
+        @testset "NeighborhoodStencil shells" begin
+            sst_general = differentiate(δ₊{1}(f), f)                  # Stencil{RowAccess}
+            @test sst_general isa Stencil
 
-        # Each shell throws ErrorException with the expected message fragment.
-        for st in (sst_general, sst_linear, sst_star)
-            err = try
-                st * f
-                nothing
-            catch e
-                e
+            sst_linear = build_stencil(differentiate(δ₊{1}(f), f); size = (6,))
+            @test sst_linear isa LinearStencil
+
+            sst_star = build_stencil(
+                differentiate(δ₋{1}(δ₊{1}(f)) .+ δ₋{2}(δ₊{2}(f)), f); size = (5, 4))
+            @test sst_star isa StarStencil
+
+            # Each shell throws ErrorException with the expected message.
+            for st in (sst_general, sst_linear, sst_star)
+                err = try
+                    st * f
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa ErrorException
+                @test occursin("not yet implemented", err.msg)
             end
-            @test err isa ErrorException
-            @test occursin("not yet implemented", err.msg)
         end
 
-        # Regression guard: the deliberate "no `*` between two AbstractPointwise"
-        # discipline still holds. The shells dispatch only on AbstractStencil
-        # left operands and must not accidentally widen pointwise-pointwise
-        # multiplication.
+        # Regression guard: the deliberate "no `*` between two pointwise terms
+        # that are NOT diagonal stencils" discipline still holds. The
+        # IdentityStencil / DiagonalStencil methods require a concrete
+        # diagonal-stencil left operand; raw Slots / Pointwise nodes raise
+        # MethodError on `*`.
         @test_throws MethodError f * f
-        let g = Slot{:g, Float64}()
-            @test_throws MethodError f * g
-        end
+        @test_throws MethodError f * g
 
-        # And the dispatch contract is visible: exactly three * methods whose
-        # first positional type is a concrete AbstractStencil subtype.
+        # Dispatch contract: exactly three NeighborhoodStencil shells.
         ms = methods(*)
-        stencil_methods = filter(m -> begin
+        nbhd_methods = filter(m -> begin
             sig = m.sig
             sig isa UnionAll && (sig = Base.unwrap_unionall(sig))
             length(sig.parameters) >= 2 || return false
             t = sig.parameters[2]
-            t isa Type && t <: AbstractStencil
+            t isa Type && t <: NeighborhoodStencil
         end, collect(ms))
-        @test length(stencil_methods) == 3
+        @test length(nbhd_methods) == 3
     end
 
 end

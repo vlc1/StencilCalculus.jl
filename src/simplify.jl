@@ -9,7 +9,7 @@
 # disjoint dispatch keeps the two algebras separate.
 
 # --- Identity predicates ----------------------------------------------------
-# Type-dispatched on the structural identities (`Zero`/`One`/`Null`/`Unity`)
+# Type-dispatched on the structural identities (`Zero`/`IdentityStencil`/`Null`/`Unity`)
 # and value-dispatched on a literal `Fill(Constant(v))`. A `Fill` wrapping a
 # symbolic scalar (e.g. `Fill(Var{S})`, `Fill(Scalar(…))`) is *never*
 # treated as an identity (the symbolic value may take any runtime value).
@@ -18,10 +18,10 @@ _is_term_zero(::Fill{<:Null})        = true
 _is_term_zero(f::Fill{<:Constant})   = iszero(f.val.val)
 _is_term_zero(::AbstractPointwise)        = false
 
-_is_term_one(::One)                  = true
+_is_term_one(::IdentityStencil)      = true
 _is_term_one(::Fill{<:Unity})        = true
 _is_term_one(f::Fill{<:Constant})    = isone(f.val.val)
-_is_term_one(::AbstractPointwise)         = false
+_is_term_one(::AbstractPointwise)    = false
 
 # --- Default rules ---------------------------------------------------------
 
@@ -35,9 +35,9 @@ rule_shift_pushdown(::AbstractPointwise) = nothing
 rule_shift_pushdown(t::Shifted{Sh, T, U}) where {Sh, T, U<:Pointwise} =
     Pointwise(t.term.fn, map(a -> Shifted(t.shift, a), t.term.args))
 
-# 3. Shift over a position-independent leaf (Fill / Zero / One) is a no-op.
+# 3. Shift over a position-independent leaf (Fill / Zero / IdentityStencil) is a no-op.
 rule_shift_const(::AbstractPointwise) = nothing
-rule_shift_const(t::Shifted{Sh, T, U}) where {Sh, T, U<:Union{Fill, One}} =
+rule_shift_const(t::Shifted{Sh, T, U}) where {Sh, T, U<:Union{Fill, IdentityStencil}} =
     t.term
 
 # 4. Identity / annihilator.
@@ -101,7 +101,7 @@ Built-in rules (in application order):
 |:------------------------|:----------------------------------------------------------|
 | `rule_shift_compose`    | `Shifted(s₁, Shifted(s₂, t)) → Shifted(s₁+s₂, t)`       |
 | `rule_shift_pushdown`   | `Shifted(s, f(a…)) → f(Shifted(s,a)…)`                   |
-| `rule_shift_const`      | `Shifted(s, Fill/One) → Fill/One` (Zero is a `Fill{<:Null}`) |
+| `rule_shift_const`      | `Shifted(s, Fill/IdentityStencil) → Fill/IdentityStencil` (Zero is a `Fill{<:Null}`) |
 | `rule_identity`         | `0+x→x`, `x+0→x`, `0*x→0`, `1*x→x`, `x/1→x`, `0/x→0`   |
 | `rule_double_negation`  | `-(-x) → x`                                              |
 | `rule_fill_collapse`    | All-`Fill` `Pointwise` → `Fill(Scalar(fn,…))` (scalar-land) |

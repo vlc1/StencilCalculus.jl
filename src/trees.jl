@@ -13,8 +13,11 @@ AbstractTrees.children(t::Shifted)  = (t.term,)
 AbstractTrees.nodevalue(::Slot{S}) where {S} = S
 AbstractTrees.children(::Slot)               = ()
 
-AbstractTrees.nodevalue(::One{T}) where {T} = one(T)
-AbstractTrees.children(::One)               = ()
+AbstractTrees.nodevalue(::IdentityStencil{T, U}) where {T, U} = one(U)
+AbstractTrees.children(::IdentityStencil)                     = ()
+
+AbstractTrees.nodevalue(::DiagonalStencil) = :diag
+AbstractTrees.children(d::DiagonalStencil) = (d.term,)
 
 # `Fill` covers both literals and the scalar-side identities (`Null`/`Unity`),
 # the latter of which is what the [`Zero`](@ref) alias wraps. The wrapped value

@@ -20,15 +20,43 @@ end
 Slot{S}() where {S} = Slot{S, Float64}()
 
 """
-    One{T}()
+    IdentityStencil{T, U}()
+    IdentityStencil(U::Type) / IdentityStencil(x)
 
-Type-level multiplicative identity (structure, not data): lets differentiation
-collapse and `simplify` rewrite by dispatch. Lowers to `one(T)`. Scalar-side
-analogue: [`Unity`](@ref). See also [`Zero`](@ref) for the additive identity.
+Type-level multiplicative identity for [`AbstractPointwise`](@ref): the
+pointwise-side analogue of scalar-side [`Unity`](@ref), now reified as a
+*stencil* (so it can serve as the neutral element of `*(stencil, pointwise)`
+without breaking the `AbstractPointwise` × `AbstractPointwise` discipline).
+
+The parameter `T` is **bool-shaped** (`Bool` or `AbstractArray{Bool}`),
+mirroring `Unity`'s discipline so that promotion in surrounding arithmetic
+recovers the value type without pinning a Stencil's coefficient eltype. The
+second parameter `U` is the *value space* (e.g. `Float64`, `SMatrix{N,N,F}`)
+recovered at materialize time via `one(U)`.
+
+The outer constructors map any concrete value-space type `U` to its bool-
+shape `T = _to_bool_shape(_unity_space(U))`, so
+`IdentityStencil(Float64) === IdentityStencil{Bool, Float64}()` and
+`eltype(IdentityStencil(Float64)) === Bool`. Materializes to `one(U)` —
+e.g. `1.0` for `U = Float64`.
+
+See also [`Zero`](@ref) for the additive identity.
 """
-struct One{T} <: AbstractPointwise{T}
-    One{T}() where {T} = (_assert_concrete(:One, T); new{T}())
+struct IdentityStencil{T, U} <: AbstractPointwise{T}
+    function IdentityStencil{T, U}() where {T, U}
+        _assert_bool_shape(:IdentityStencil, T)
+        applicable(one, U) || throw(ArgumentError(
+            "IdentityStencil{T, U} requires `one(U)` to be defined (a " *
+            "square-scalar shape); got U=$U"))
+        new{T, U}()
+    end
 end
+IdentityStencil(::Type{U}) where {U} = IdentityStencil{_to_bool_shape(_unity_space(U)), _unity_space(U)}()
+IdentityStencil(::U)       where {U} = IdentityStencil{_to_bool_shape(_unity_space(U)), _unity_space(U)}()
+
+# Value-space accessor for codegen / display.
+_value_space(::Type{<:IdentityStencil{T, U}}) where {T, U} = U
+_value_space(s::IdentityStencil) = _value_space(typeof(s))
 
 """
     Pointwise(fn, args::Tuple{Vararg{AbstractPointwise}})
@@ -115,12 +143,49 @@ const Zero{T} = Fill{Null{T}}
 Zero(T::Type)       = Fill(Null(T))
 Zero(::T) where {T} = Fill(Null(T))
 
-# Bool-shape structural markers wrapped by `Fill`: a `Zero` (== `Fill{<:Null}`)
-# or a `Fill{<:Unity}`. Both materialize to `zero(T)`/`one(T)` of any
-# surrounding T via promotion, so when they appear as a Stencil coefficient
-# they do *not* pin the Stencil's coefficient eltype. See StencilCore's
-# `_is_eltype_wildcard` trait and the `Stencil` inner constructor.
+"""
+    DiagonalStencil(t::AbstractPointwise{T}) -> DiagonalStencil{T, typeof(t)}
+
+A *diagonal* stencil that, when applied to another `AbstractPointwise{U}`
+via `*(d, p)`, broadcasts the wrapped term elementwise: `d * p ==
+Pointwise(*, (d.term, p))`. Pointwise-side counterpart of a Number
+coefficient pinned to a column. The eltype `T = eltype(t)` is the value
+space of the diagonal entries — Number (scalar-on-scalar) or a square
+`SMatrix{N, N, F}` (matrix-on-vector). Requires `one(T)` to be defined.
+
+Pure pointwise terms (e.g. `Slot`, `Pointwise(*, …)`) cannot be used as a
+left operand of `*` directly — by design, multiplication on pointwise terms
+is reserved for stencil application. Wrap in `DiagonalStencil` to opt in.
+"""
+struct DiagonalStencil{T, A<:AbstractPointwise} <: AbstractPointwise{T}
+    term::A
+    # We deliberately do NOT tie A's type parameter to T (`A<:AbstractPointwise{T}`):
+    # for `Fill(τ::Var{:τ, Float64})`, `A = Fill{Var{:τ, Float64}}` carries the
+    # *payload* type at the type-parameter level while `eltype` reports `Float64`
+    # via the `Fill{<:AbstractScalar}` specialization. We honor `eltype(t)` as the
+    # source of truth and verify it inside the inner ctor.
+    function DiagonalStencil{T, A}(t::A) where {T, A<:AbstractPointwise}
+        eltype(t) === T || throw(ArgumentError(
+            "DiagonalStencil{T} requires eltype(t) === T; got eltype = " *
+            "$(eltype(t)), T = $T"))
+        applicable(one, T) || throw(ArgumentError(
+            "DiagonalStencil{T} requires T to be a square-scalar shape " *
+            "(one(T) defined); got T=$T"))
+        new{T, A}(t)
+    end
+end
+DiagonalStencil(t::AbstractPointwise) = DiagonalStencil{eltype(t), typeof(t)}(t)
+
+# Bool-shape structural markers: a `Zero` (== `Fill{<:Null}`), a
+# `Fill{<:Unity}`, or an `IdentityStencil` — all materialize to
+# `zero(T)`/`one(T)` of any surrounding T via promotion. Pointwise-/Shifted-
+# trees over wildcards-only are themselves wildcards (chain-rule expressions
+# like `Pointwise(-, (IdentityStencil(T),))` produced by `derivative(-, …)`
+# carry the same Bool-shape discipline through the Stencil-eltype check).
 _is_eltype_wildcard(::Fill{<:Union{Null, Unity}}) = true
+_is_eltype_wildcard(::IdentityStencil)            = true
+_is_eltype_wildcard(p::Pointwise)                 = all(_is_eltype_wildcard, p.args)
+_is_eltype_wildcard(s::Shifted)                   = _is_eltype_wildcard(s.term)
 
 # Promote a value to a term: AbstractPointwise passes through; AbstractScalar
 # wraps in Fill; anything else (Number, SMatrix, …) wraps as Fill(Constant(x))

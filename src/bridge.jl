@@ -14,11 +14,12 @@ _interlace(terms::NTuple{M, AbstractPointwise}) where {M} = Pointwise(SVector, t
 # RowAccess → ColumnAccess. Offsets are invariant; each per-offset coefficient
 # `g_σ` (value at the row) becomes `Shifted(-σ, g_σ)` (the value re-read at the
 # column). Constant coefficients are unchanged (shift over a constant is a
-# no-op). A no-op when already ColumnAccess.
+# no-op). A no-op when already ColumnAccess. Uses the explicit-T `Stencil{T}`
+# ctor so all-wildcard inputs (e.g. `differentiate(f, f)`) round-trip cleanly.
 function _to_column(sst::Stencil)
     AccessStyle(sst) === ColumnAccess() && return sst
     shifted = map((s, g) -> simplify(Shifted(-s, g)), sst.shifts, sst.terms)
-    Stencil(ColumnAccess, sst.shifts, shifted)
+    Stencil(eltype(sst), ColumnAccess, sst.shifts, shifted)
 end
 
 _npairs(s::StaticShift) = length(s.pairs)
@@ -53,7 +54,7 @@ function densify(sst::Stencil)
         i = findfirst(==(o), offs)
         push!(newterms, i === nothing ? Zero(T) : gs[i])
     end
-    Stencil(typeof(AccessStyle(sst)), (newshifts...,), (newterms...,))
+    Stencil(eltype(sst), typeof(AccessStyle(sst)), (newshifts...,), (newterms...,))
 end
 
 # Narrow to LinearStencil (single-axis contiguous) or StarStencil (canonical

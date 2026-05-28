@@ -62,7 +62,7 @@ simplify(Fill(Const(2.0)) .+ Fill(Const(3.0)))   # Fill(Const(5.0))
 simplify(2 .* (f .+ 3 .* f))                     # (2*1 + 2*3 = 8) ⇒ collapses inside Fill
 ```
 
-The identity rules detect a structural `Zero`/`One` *by type*, a
+The identity rules detect a structural `Zero`/`IdentityStencil` *by type*, a
 `Fill{<:Null}`/`Fill{<:Unity}` *by type* (matching the scalar-side dispatch),
 and a literal `Fill{<:Const}` *by value* (`iszero`/`isone` on the wrapped
 literal). The last is a deliberate departure from a stricter no-auto-fold

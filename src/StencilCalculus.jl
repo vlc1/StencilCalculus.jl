@@ -3,8 +3,9 @@ module StencilCalculus
 using AbstractTrees
 import StaticArrays: SVector, StaticArray  # imported (not just `using`) so we can add methods
 using RuntimeGeneratedFunctions
-using StencilCore: AbstractPointwise, AbstractScalar,
-                   Var, Constant, Null, Unity, Scalar, _assert_concrete,
+using StencilCore: AbstractPointwise, AbstractScalar, NeighborhoodStencil,
+                   Var, Constant, Null, Unity, Scalar,
+                   _assert_concrete, _assert_bool_shape, _to_bool_shape,
                    StaticShift, SShift, StaticPair, SPair,
                    Stencil, RowAccess, ColumnAccess, dim, offset,
                    ô, ê₁, ê₂, ê₃, ê₄, ê₅, ê₆, ê₇, ê₈, ê₉,
@@ -14,7 +15,7 @@ import StencilCore: simplify, materialize, differentiate, derivative,
 
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
-include("pointwise.jl")    # Slot, Zero, One, Pointwise, Shifted, Fill
+include("pointwise.jl")    # Slot, Zero, IdentityStencil, DiagonalStencil, Pointwise, Shifted, Fill
 include("operators.jl")    # operator overloads, SVector interception, getindex sugar, DSL functors
 include("trees.jl")        # AbstractTrees interface
 include("simplify.jl")     # rule rewriter for AbstractPointwise
@@ -25,7 +26,7 @@ include("apply.jl")        # `*(stencil, pointwise)` shells (bodies TBD)
 include("show.jl")         # component-form display of normal-form terms
 
 # Concrete pointwise types + their constructor macros.
-export AbstractPointwise, Slot, Zero, One, Pointwise, Shifted, Fill, @slot
+export AbstractPointwise, Slot, Zero, IdentityStencil, DiagonalStencil, Pointwise, Shifted, Fill, @slot
 
 # Re-export the scalar algebra from StencilCore so users get the full CAS
 # from a single `using StencilCalculus`.

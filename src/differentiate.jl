@@ -7,8 +7,10 @@
 # The Slot path is **row-anchored**: the coefficient at offset `σ` is
 # `∂F/∂(f[σ])` evaluated at the equation/row index — no shifts are injected
 # (the Row→Column conversion lives in the assembly bridge). Neutral elements
-# are the type-level `Zero`/`One`, so the chain rule collapses under
-# `simplify`.
+# are the type-level `Zero`/`IdentityStencil`, so the chain rule collapses
+# under `simplify`. The `differentiate` entry point passes the slot's
+# `_unity_space(T)` to `Stencil{T}(...)` so all-wildcard stencils (e.g.
+# `differentiate(f, f)`) still pin the coefficient eltype.
 
 # --- @pointwise_rule macro ---------------------------------------------------
 
@@ -26,15 +28,15 @@ partials `(∂f/∂x, ∂f/∂y)` — the tuple maps positionally to `Val{1}` an
 
 Inside `expr`, the argument names `x`, `y` refer to the corresponding
 [`AbstractPointwise`](@ref) nodes (not numeric values). Use the pointwise
-arithmetic operators and `One{eltype(x)}()` / `Zero(eltype(x))` for
-structural identities, or wrap literals in `Fill(Constant(v))`.
+arithmetic operators and `IdentityStencil(eltype(x))` / `Zero(eltype(x))`
+for structural identities, or wrap literals in `Fill(Constant(v))`.
 
 **Examples:**
 
 ```julia
 @pointwise_rule sin(x)  = Pointwise(cos, (x,))
 @pointwise_rule exp(x)  = Pointwise(exp, (x,))
-@pointwise_rule log(x)  = Pointwise(/, (One{eltype(x)}(), x))
+@pointwise_rule log(x)  = Pointwise(/, (IdentityStencil(eltype(x)), x))
 @pointwise_rule *(x, y) = (y, x)
 ```
 
@@ -86,25 +88,25 @@ end
 
 _pe(args) = mapreduce(eltype, promote_type, args)   # promoted element type
 
-derivative(::typeof(+), ::Val,    args::Vararg{AbstractPointwise}) = One{_pe(args)}()
-derivative(::typeof(-), ::Val{1}, x::AbstractPointwise)            = Pointwise(-, (One{eltype(x)}(),))
-derivative(::typeof(-), ::Val{1}, x::AbstractPointwise, y::AbstractPointwise) = One{_pe((x, y))}()
-derivative(::typeof(-), ::Val{2}, x::AbstractPointwise, y::AbstractPointwise) = Pointwise(-, (One{_pe((x, y))}(),))
+derivative(::typeof(+), ::Val,    args::Vararg{AbstractPointwise}) = IdentityStencil(_pe(args))
+derivative(::typeof(-), ::Val{1}, x::AbstractPointwise)            = Pointwise(-, (IdentityStencil(eltype(x)),))
+derivative(::typeof(-), ::Val{1}, x::AbstractPointwise, y::AbstractPointwise) = IdentityStencil(_pe((x, y)))
+derivative(::typeof(-), ::Val{2}, x::AbstractPointwise, y::AbstractPointwise) = Pointwise(-, (IdentityStencil(_pe((x, y))),))
 derivative(::typeof(*), ::Val{1}, x::AbstractPointwise, y::AbstractPointwise) = y
 derivative(::typeof(*), ::Val{2}, x::AbstractPointwise, y::AbstractPointwise) = x
-derivative(::typeof(/), ::Val{1}, x::AbstractPointwise, y::AbstractPointwise) = Pointwise(/, (One{_pe((x, y))}(), y))
+derivative(::typeof(/), ::Val{1}, x::AbstractPointwise, y::AbstractPointwise) = Pointwise(/, (IdentityStencil(_pe((x, y))), y))
 derivative(::typeof(/), ::Val{2}, x::AbstractPointwise, y::AbstractPointwise) = Pointwise(-, (Pointwise(/, (x, Pointwise(*, (y, y)))),))
 derivative(::typeof(^), ::Val{1}, x::AbstractPointwise, n::AbstractPointwise) =
-    Pointwise(*, (n, Pointwise(^, (x, Pointwise(-, (n, One{_pe((n,))}()))))))
+    Pointwise(*, (n, Pointwise(^, (x, Pointwise(-, (n, IdentityStencil(_pe((n,)))))))))
 derivative(::typeof(sin),  ::Val{1}, x::AbstractPointwise) = Pointwise(cos, (x,))
 derivative(::typeof(cos),  ::Val{1}, x::AbstractPointwise) = Pointwise(-, (Pointwise(sin, (x,)),))
 derivative(::typeof(exp),  ::Val{1}, x::AbstractPointwise) = Pointwise(exp, (x,))
-derivative(::typeof(log),  ::Val{1}, x::AbstractPointwise) = Pointwise(/, (One{_pe((x,))}(), x))
+derivative(::typeof(log),  ::Val{1}, x::AbstractPointwise) = Pointwise(/, (IdentityStencil(_pe((x,))), x))
 derivative(::typeof(sqrt), ::Val{1}, x::AbstractPointwise) =
-    Pointwise(/, (One{_pe((x,))}(), Pointwise(*, (Fill(Constant(2)), Pointwise(sqrt, (x,))))))
+    Pointwise(/, (IdentityStencil(_pe((x,))), Pointwise(*, (Fill(Constant(2)), Pointwise(sqrt, (x,))))))
 derivative(::typeof(tan),  ::Val{1}, x::AbstractPointwise) =
     # ∂tan(x)/∂x = 1 + tan²(x); avoids introducing sec.
-    Pointwise(+, (One{_pe((x,))}(),
+    Pointwise(+, (IdentityStencil(_pe((x,))),
                   Pointwise(*, (Pointwise(tan, (x,)), Pointwise(tan, (x,))))))
 derivative(::typeof(abs),  ::Val{1}, x::AbstractPointwise) =
     # ∂|x|/∂x = sign(x); undefined at x = 0 (caller's responsibility).
@@ -118,19 +120,19 @@ const _Contrib = Pair{StaticShift, AbstractPointwise}
 
 _slotsym(::Slot{S}) where {S} = S
 
-# Position-independent leaves (Fill, One) have no Slot dependence. `Zero` is
-# subsumed by `Fill` (it is `Fill{<:Null}`).
-_diff(::Union{Fill, One}, ::Slot) = _Contrib[]
+# Position-independent leaves (Fill, IdentityStencil) have no Slot dependence.
+# `Zero` is subsumed by `Fill` (it is `Fill{<:Null}`).
+_diff(::Union{Fill, IdentityStencil}, ::Slot) = _Contrib[]
 
 _diff(::Slot{S2, T}, ::Slot{S}) where {S2, T, S} =
-    S2 === S ? _Contrib[ô => One{T}()] : _Contrib[]
+    S2 === S ? _Contrib[ô => IdentityStencil(T)] : _Contrib[]
 
 function _diff(sh::Shifted, ::Slot{S}) where {S}
     sl = sh.term
     sl isa Slot || throw(ArgumentError(
         "differentiate expects normal-form input (shifts on slots); got a " *
         "Shifted over $(typeof(sl)). Call simplify first."))
-    _slotsym(sl) === S ? _Contrib[sh.shift => One{eltype(sh)}()] : _Contrib[]
+    _slotsym(sl) === S ? _Contrib[sh.shift => IdentityStencil(eltype(sh))] : _Contrib[]
 end
 
 function _diff(t::Pointwise, v::Slot)
@@ -159,7 +161,7 @@ end
 # collapses to a per-cell broadcast coefficient. Walking strategy: like the
 # Slot path, but without spatial offsets — accumulate one AbstractPointwise.
 
-_diff_scalar(::Union{Slot, Shifted, One}, ::Var) = nothing
+_diff_scalar(::Union{Slot, Shifted, IdentityStencil}, ::Var) = nothing
 function _diff_scalar(f::Fill{<:AbstractScalar}, v::Var)
     d = differentiate(f.val, v)
     d isa Null ? nothing : Fill(d)
@@ -211,15 +213,18 @@ function _axis_offset(s::StaticShift, d::Int)
 end
 
 """
-    differentiate(t::AbstractPointwise, ::Slot{S}) -> StencilCore.Stencil{RowAccess}
+    differentiate(t::AbstractPointwise, ::Slot{S, T_val}) -> StencilCore.Stencil{RowAccess}
 
 Differentiate `t` with respect to the field named `S` (matched on the symbol
-only). Returns a row-anchored `Stencil` in structure-of-arrays form: reverse-
-lex-ordered offsets `shifts` and a parallel tuple `terms` whose `k`-th entry is
-the coefficient `∂t/∂(f[σ_k])`. Throws if `t` does not depend on `S`
-(identically-zero derivative).
+only). Returns a row-anchored `Stencil{T_coef, RowAccess}` in structure-of-
+arrays form: reverse-lex-ordered offsets `shifts` and a parallel tuple
+`terms` whose `k`-th entry is the coefficient `∂t/∂(f[σ_k])`. The Stencil's
+coefficient eltype is `T_coef = _unity_space(T_val)` — `T_val` for scalar
+slots, `SMatrix{N, N, F}` for `SVector{N, F}` slots — passed explicitly so
+all-wildcard derivatives (e.g. `differentiate(f, f)`) still pin `T_coef`.
+Throws if `t` does not depend on `S` (identically-zero derivative).
 """
-function differentiate(t::AbstractPointwise, v::Slot{S}) where {S}
+function differentiate(t::AbstractPointwise, v::Slot{S, T_val}) where {S, T_val}
     shifts, coefs = _group(_diff(simplify(t), v))
     keep = findall(c -> !_is_term_zero(c), coefs)
     shifts, coefs = shifts[keep], coefs[keep]
@@ -230,7 +235,12 @@ function differentiate(t::AbstractPointwise, v::Slot{S}) where {S}
     key(s) = ntuple(k -> _axis_offset(s, N - k + 1), N)   # axis N most significant
     perm = sortperm(shifts; by = key)
     shifts, coefs = shifts[perm], coefs[perm]
-    Stencil(RowAccess, (shifts...,), (coefs...,))
+    # The coefficient eltype is the slot's `_unity_space(T_val)` — the linear-
+    # map space (scalar T_val, square SMatrix for an SVector slot). Passing it
+    # explicitly lets the Stencil ctor pin T even when every coefficient is a
+    # wildcard (e.g. `differentiate(f, f)`).
+    J = _unity_space(T_val)
+    Stencil(J, RowAccess, (shifts...,), (coefs...,))
 end
 
 """
